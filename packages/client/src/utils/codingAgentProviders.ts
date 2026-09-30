@@ -14,18 +14,22 @@ export function isAuthModelProvider(provider?: string): boolean {
   return SCOPED_EXTERNAL_AGENT_AUTH_PROVIDERS.has(String(provider || '').trim().toLowerCase())
 }
 
+function isOpenCodeCodexOAuthProvider(agentId: ChatCodingAgentId, provider?: string): boolean {
+  return agentId === 'opencode' && String(provider || '').trim().toLowerCase() === 'openai-codex'
+}
+
 export function canScopedCodingAgentUseProvider(
   agentId: ChatCodingAgentId,
   provider?: string,
 ): boolean {
-  return agentId === 'ekko-agent' || !isAuthModelProvider(provider)
+  return agentId === 'ekko-agent' || isOpenCodeCodexOAuthProvider(agentId, provider) || !isAuthModelProvider(provider)
 }
 
 export function usesServerManagedProviderAuth(
   agentId: ChatCodingAgentId,
   provider?: string,
 ): boolean {
-  return agentId === 'ekko-agent' && isAuthModelProvider(provider)
+  return (agentId === 'ekko-agent' && isAuthModelProvider(provider)) || isOpenCodeCodexOAuthProvider(agentId, provider)
 }
 
 export function isKeylessModelProvider(provider?: string): boolean {

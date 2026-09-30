@@ -16,6 +16,15 @@ describe('coding agent provider visibility', () => {
     },
   )
 
+  it('exposes only server-managed Codex OAuth to scoped OpenCode sessions', () => {
+    expect(canScopedCodingAgentUseProvider('opencode', 'openai-codex')).toBe(true)
+    expect(usesServerManagedProviderAuth('opencode', 'openai-codex')).toBe(true)
+    for (const provider of ['copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth', 'minimax-oauth']) {
+      expect(canScopedCodingAgentUseProvider('opencode', provider)).toBe(false)
+      expect(usesServerManagedProviderAuth('opencode', provider)).toBe(false)
+    }
+  })
+
   it.each(['claude-code', 'codex'] as const)(
     'keeps auth providers hidden from scoped %s sessions',
     (agentId) => {
