@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertModelBindingPreservesRequest,
+  MagpieGatewayAdapter,
   createPassthroughModelAccessAdapter,
   enforceModelAccessBoundary,
   type ModelAccessRequest,
@@ -70,6 +71,27 @@ describe('Ekko Magpie route boundary', () => {
     })
 
     await expect(adapter.bind({ ...request, modelId: 'model-1' })).rejects.toThrow('substituted modelId')
+  })
+
+  it('uses native TokenFor caller identity and preserves session identity for codex', async () => {
+    const fetchImpl = async (input: string | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('http://127.0.0.1:3425/v1/responses')
+      const headers = new Headers(init?.headers)
+      expect(headers.get('authorization')).toBe('Bearer magpie-opencode')
+      expect(headers.get('x-magpie-session')).toBe('session-1')
+      expect(headers.has('x-magpie-agent')).toBe(false)
+      return new Response(JSON.stringify({ id: 'response-1', output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }] }), { status: 200 })
+    }
+    const adapter = new MagpieGatewayAdapter({ ...request, modelId: 'codex-model' }, { fetch: fetchImpl })
+
+    await adapter.create({ messages: [{ role: 'user', content: 'hello' }] })
+  })
+
+  it('routes claude through Anthropic Messages and fails closed without a model', () => {
+    expect(() => new MagpieGatewayAdapter({ ...request, routeId: 'claude' })).toThrow('no default model')
+    const adapter = new MagpieGatewayAdapter({ ...request, routeId: 'claude', modelId: 'claude-model' })
+    expect(adapter.requestStyle).toBe('anthropic-messages')
+    expect(adapter.requestTarget()).toBe('http://127.0.0.1:3425/v1/messages')
   })
 
   it('rejects substitution through input mutation and leaves the caller intent intact', async () => {

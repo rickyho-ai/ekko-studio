@@ -14,8 +14,82 @@ export interface ModelAccessRequest {
 
 export interface ModelBinding extends ModelAccessRequest {}
 
+import { AnthropicMessagesModelClient } from './providers/anthropic'
+import { OpenAIResponsesModelClient } from './providers/openai-responses'
+import type { ModelClient, ModelClientOptions, ModelEvent, ModelRequest, ModelResponse } from './types'
+
 export interface ModelAccessAdapter {
   bind(request: ModelAccessRequest): Promise<ModelBinding>
+}
+
+export interface MagpieGatewayAdapterOptions extends ModelClientOptions {
+  readonly baseUrl?: string
+  readonly defaultModel?: string
+}
+
+/**
+ * Native Magpie gateway client. The gateway identifies the caller through its
+ * TokenFor contract (Bearer magpie-<agent>), while X-Magpie-Session carries
+ * session affinity. No legacy X-Magpie-Agent header is sent.
+ */
+export class MagpieGatewayAdapter implements ModelAccessAdapter, ModelClient {
+  readonly provider: string
+  readonly requestStyle: 'openai-responses' | 'anthropic-messages'
+  readonly capabilities: ModelClient['capabilities']
+
+  private readonly request: ModelAccessRequest
+  private readonly client: ModelClient
+
+  constructor(request: ModelAccessRequest, options: MagpieGatewayAdapterOptions = {}) {
+    this.request = { ...request }
+    const model = request.modelId ?? options.defaultModel
+    if (!model) throw new Error(`Magpie gateway has no default model for ${request.routeId}`)
+
+    const baseUrl = (options.baseUrl ?? 'http://127.0.0.1:3425').replace(/\/+$/, '')
+    const headers = {
+      authorization: `Bearer magpie-${request.agentId}`,
+      'X-Magpie-Session': request.sessionId,
+    }
+    const config = {
+      id: `magpie-${request.routeId}`,
+      type: request.routeId === 'claude' ? 'anthropic' as const : 'openai' as const,
+      requestStyle: request.routeId === 'claude' ? 'anthropic-messages' as const : 'openai-responses' as const,
+      endpointPath: request.routeId === 'claude' ? 'v1/messages' : 'v1/responses',
+      baseUrl,
+      defaultModel: model,
+      headers,
+    }
+    const clientOptions: ModelClientOptions = { fetch: options.fetch }
+    this.client = request.routeId === 'claude'
+      ? new AnthropicMessagesModelClient(config, clientOptions)
+      : new OpenAIResponsesModelClient(config, clientOptions)
+    this.provider = this.client.provider
+    this.requestStyle = request.routeId === 'claude' ? 'anthropic-messages' : 'openai-responses'
+    this.capabilities = this.client.capabilities
+  }
+
+  async bind(): Promise<ModelBinding> {
+    return { ...this.request }
+  }
+
+  create(request: ModelRequest): Promise<ModelResponse> {
+    return this.client.create({ ...request, model: request.model ?? this.request.modelId })
+  }
+
+  stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    return this.client.stream({ ...request, model: request.model ?? this.request.modelId })
+  }
+
+  requestTarget(request?: ModelRequest): string {
+    return this.client.requestTarget?.(request ?? { messages: [] }) ?? ''
+  }
+}
+
+export function createMagpieGatewayAdapter(
+  request: ModelAccessRequest,
+  options: MagpieGatewayAdapterOptions = {},
+): MagpieGatewayAdapter {
+  return new MagpieGatewayAdapter(request, options)
 }
 
 /**
