@@ -35,6 +35,7 @@ import { configureProfileConfig } from '../../packages/server/src/modules/studio
 import * as providerRuntime from '../../packages/server/src/modules/studio/public/provider-runtime'
 import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
 import { getCodingAgentManagedMcpServerConfigs } from '../../packages/server/src/modules/coding-agents/services'
+import '../../packages/server/src/bootstrap/authorized-provider-adapter'
 
 // Registry tests verify isolated homes/model injection without requiring a
 // machine-wide DSH install. Real Web composition is covered by dsh-web-real.
@@ -100,6 +101,7 @@ function expectLauncherFragment(script: string, fragment: string): void {
 function makeHome(compression?: Record<string, unknown>) {
   const home = mkdtempSync(join(tmpdir(), 'hermes-coding-agent-launch-'))
   homes.push(home)
+  process.env.HERMES_HOME = home
   process.env.HERMES_WEB_UI_HOME = home
   process.env.HERMES_CODING_AGENT_GLOBAL_HOME = join(home, 'global-home')
   process.env.CODEX_HOME = join(home, 'global-home', '.codex')
@@ -216,6 +218,7 @@ it('pins run credentials to the bundled transport while preserving ordinary over
 
 afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
+  delete process.env.HERMES_HOME
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   delete process.env.CODEX_HOME
   delete process.env.HERMES_AGENT_NODE
@@ -1572,9 +1575,7 @@ describe('coding agent launch preparation', () => {
 
   it('maps credential_pool Codex OAuth into ephemeral OpenCode native auth content', async () => {
     const home = makeHome()
-    const profileDir = join(home, 'profiles', 'default')
-    mkdirSync(profileDir, { recursive: true })
-    writeFileSync(join(profileDir, 'auth.json'), JSON.stringify({
+    writeFileSync(join(home, 'auth.json'), JSON.stringify({
       providers: { 'openai-codex': { tokens: { refresh_token: 'refresh-token' } } },
       credential_pool: { 'openai-codex': [{ access_token: 'access-token', refresh_token: 'refresh-token' }] },
     }))
@@ -1591,8 +1592,11 @@ describe('coding agent launch preparation', () => {
     expect(result.env.OPENCODE_CONFIG_CONTENT).not.toContain('refresh-token')
   })
 
-  it('fails closed when native OpenCode OAuth credentials are missing', async () => {
-    makeHome()
+  it('fails closed when native OpenCode OAuth credentials are incomplete', async () => {
+    const home = makeHome()
+    writeFileSync(join(home, 'auth.json'), JSON.stringify({
+      credential_pool: { 'openai-codex': [{ access_token: 'access-token' }] },
+    }))
     await expect(prepareCodingAgentLaunch('opencode', {
       mode: 'scoped', profile: 'default', provider: 'openai-codex', model: 'gpt-5-codex',
       baseUrl: 'https://chatgpt.com/backend-api/codex', apiMode: 'codex_responses',
