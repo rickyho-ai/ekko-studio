@@ -4,37 +4,83 @@ import {
   createPassthroughModelAccessAdapter,
   enforceModelAccessBoundary,
   type ModelAccessRequest,
+  type ModelBinding,
 } from '../../packages/ekko-agent/src/index'
 
 const request: ModelAccessRequest = {
   sessionId: 'session-1',
-  agentId: 'agent-1',
-  modelId: 'model-1',
-  accountId: 'account-1',
-  providerId: 'provider-1',
+  agentId: 'opencode',
+  routeId: 'codex',
 }
 
-describe('Ekko model access boundary', () => {
-  it('preserves explicit agent, model, account, and provider references', async () => {
+describe('Ekko Magpie route boundary', () => {
+  it.each([
+    ['opencode', 'codex'],
+    ['opencode', 'claude'],
+    ['hermes', 'codex'],
+    ['hermes', 'claude'],
+  ] as const)('preserves %s -> %s without an explicit model', async (agentId, routeId) => {
     const adapter = enforceModelAccessBoundary(createPassthroughModelAccessAdapter())
+    const intent: ModelAccessRequest = { ...request, agentId, routeId }
 
-    await expect(adapter.bind(request)).resolves.toEqual(request)
+    await expect(adapter.bind(intent)).resolves.toEqual(intent)
   })
 
-  it('rejects identity substitution instead of falling back', async () => {
+  it('preserves an explicitly supplied model', async () => {
+    const adapter = enforceModelAccessBoundary(createPassthroughModelAccessAdapter())
+    const intent = { ...request, modelId: 'model-1' }
+
+    await expect(adapter.bind(intent)).resolves.toEqual(intent)
+  })
+
+  it('allows a gateway model when no model was explicitly supplied', async () => {
     const adapter = enforceModelAccessBoundary({
       async bind(input) {
-        return { ...input, modelId: 'fallback-model' }
+        return { ...input, modelId: 'route-default-model' }
       },
     })
 
-    await expect(adapter.bind(request)).rejects.toThrow('substituted modelId')
+    await expect(adapter.bind(request)).resolves.toEqual({ ...request, modelId: 'route-default-model' })
   })
 
-  it('rejects a binding that omits or changes an explicit reference', () => {
-    expect(() => assertModelBindingPreservesRequest(request, {
-      ...request,
-      providerId: 'other-provider',
-    })).toThrow('substituted providerId')
+  it.each([
+    ['sessionId', { sessionId: 'other-session' }],
+    ['agentId', { agentId: 'hermes' }],
+    ['routeId', { routeId: 'claude' }],
+    ['modelId', { modelId: 'other-model' }],
+    ['modelId', { modelId: undefined }],
+  ] satisfies [string, Partial<ModelBinding>][])('rejects substituted or dropped %s', async (key, change) => {
+    const intent = { ...request, modelId: 'model-1' }
+    const binding = { ...intent, ...change }
+    const adapter = enforceModelAccessBoundary({
+      async bind() {
+        return binding
+      },
+    })
+
+    expect(() => assertModelBindingPreservesRequest(intent, binding)).toThrow(`substituted ${key}`)
+    await expect(adapter.bind(intent)).rejects.toThrow(`substituted ${key}`)
+  })
+
+  it('rejects an explicit model omitted from the binding', async () => {
+    const adapter = enforceModelAccessBoundary({
+      async bind({ modelId: _modelId, ...input }) {
+        return input
+      },
+    })
+
+    await expect(adapter.bind({ ...request, modelId: 'model-1' })).rejects.toThrow('substituted modelId')
+  })
+
+  it('rejects substitution through input mutation and leaves the caller intent intact', async () => {
+    const intent = { ...request }
+    const adapter = enforceModelAccessBoundary({
+      async bind(input) {
+        return Object.assign(input, { routeId: 'claude' as const })
+      },
+    })
+
+    await expect(adapter.bind(intent)).rejects.toThrow('substituted routeId')
+    expect(intent).toEqual(request)
   })
 })
