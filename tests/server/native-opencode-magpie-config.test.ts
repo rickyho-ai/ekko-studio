@@ -14,7 +14,7 @@ describe('native OpenCode Magpie configuration', () => {
         expect(model.capabilities).toEqual({ tools: true, input: ['text'], output: ['text'] })
       }
     }
-    expect(config.providers['magpie-opencode-codex']).toMatchObject({ package: '@opencode/ai/providers/openai-compatible/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' }, models: { 'codex/exact': { modelID: 'codex/exact' } } })
+    expect(config.providers['magpie-opencode-codex']).toMatchObject({ package: '@opencode/ai/providers/openai/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' }, models: { 'codex/exact': { modelID: 'codex/exact' } } })
     expect(Object.keys(config.providers['magpie-hermes-claude'].models)).toEqual(['claude/exact'])
     expect(JSON.stringify(config)).not.toMatch(/OPENCODE_DB|proxy|token|default_model/)
     expect(() => nativeMagpieConfig([])).toThrow('no codex/')

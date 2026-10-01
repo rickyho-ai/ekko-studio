@@ -48,7 +48,7 @@ describe('native OpenCode Fast V1', () => {
       },
       model: { list: vi.fn(async () => ({ data: [{ providerID: 'magpie-opencode-codex', id: 'codex/exact', modelID: 'codex/exact', enabled: true }] })) },
       plugin: { list: vi.fn(async () => ({ data: [{ id: 'ekko.native-magpie', state: { status: 'active' } }] })) },
-      provider: { get: vi.fn(async () => ({ data: { package: '@opencode/ai/providers/openai-compatible/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } })) },
+      provider: { get: vi.fn(async () => ({ data: { package: '@opencode/ai/providers/openai/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } })) },
       message: { list: vi.fn(async () => ({ data: [{ type: 'assistant', content: [{ type: 'text', text: 'done' }] }] })) },
     }
     sdk.discover.mockResolvedValue({ url: 'http://127.0.0.1:4096', auth: { type: 'basic', username: 'opencode', password: 'not-logged' } })
@@ -93,6 +93,8 @@ describe('native OpenCode Fast V1', () => {
     api.plugin.list.mockResolvedValueOnce({ data: [] })
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('hook is not active')
     api.provider.get.mockResolvedValueOnce({ data: { settings: { baseURL: 'https://other' } } })
+    await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('endpoint/protocol')
+    api.provider.get.mockResolvedValueOnce({ data: { package: '@opencode/ai/providers/openai-compatible/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } })
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('endpoint/protocol')
     expect(api.session.create).not.toHaveBeenCalled()
     expect(api.session.prompt).not.toHaveBeenCalled()
