@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { getOrCreateSession } from './compression'
 import type { SessionState } from './types'
 import type { ModelRouteRequest } from '../../contracts/model-route'
-import { nativeOpenCodeClient, readNativeOpenCodeState, sendNativeOpenCodePrompt } from './native-opencode'
+import { nativeOpenCodeClient, nativeOpenCodeFailure, readNativeOpenCodeState, sendNativeOpenCodePrompt } from './native-opencode'
 import { getSession } from '../../repositories/session-store'
 
 export async function handleNativeOpenCodeRun(
@@ -40,7 +40,7 @@ export async function handleNativeOpenCodeRun(
     if (result.isWorking || result.outcome !== 'succeeded' || result.error) emit('run.failed', { ...result, error: result.error || 'Native OpenCode execution is not confirmed successful; read native state before continuing' })
     else emit('run.completed', { output: result.output, opencode_session_id: result.opencodeSessionId })
   } catch (err) {
-    emit('run.failed', { error: err instanceof Error ? err.message : 'Native OpenCode request failed' })
+    emit('run.failed', nativeOpenCodeFailure(err, sid, data.modelRoute).body)
   } finally {
     state.isWorking = false
     state.runId = undefined

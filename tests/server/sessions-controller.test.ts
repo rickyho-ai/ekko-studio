@@ -54,6 +54,12 @@ const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
 const invalidateCodingAgentSessionRuntimeMock = vi.hoisted(() => vi.fn())
+const nativeOpenCodeMocks = vi.hoisted(() => ({ read: vi.fn(), send: vi.fn() }))
+
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/native-opencode', async () => {
+  const actual = await vi.importActual<typeof import('../../packages/server/src/modules/studio/services/chat-run/native-opencode')>('../../packages/server/src/modules/studio/services/chat-run/native-opencode')
+  return { ...actual, readNativeOpenCodeState: nativeOpenCodeMocks.read, sendNativeOpenCodePrompt: nativeOpenCodeMocks.send }
+})
 
 vi.mock('../../packages/server/src/modules/hermes/services/history/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -324,6 +330,36 @@ describe('session conversations controller', () => {
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     codingAgentRunManagerMock.stop.mockReset()
     invalidateCodingAgentSessionRuntimeMock.mockReset()
+    nativeOpenCodeMocks.read.mockReset()
+    nativeOpenCodeMocks.send.mockReset()
+  })
+
+  it.each(['nativeOpenCodeState', 'continueNativeOpenCode'] as const)('returns structured missing-native-session errors from %s without replacing the mapping', async method => {
+    const route = { agentId: 'opencode', routeId: 'codex', modelId: 'codex/exact' }
+    getSessionMock.mockReturnValue({ id: 'objective', profile: 'default', agent: 'opencode', agent_native_session_id: 'ses_missing', workspace: '/project', modelRoute: route })
+    const error = Object.assign(new Error('private diagnostics'), { name: 'SessionNotFoundError' })
+    nativeOpenCodeMocks.read.mockRejectedValue(error)
+    nativeOpenCodeMocks.send.mockRejectedValue(error)
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { params: { id: 'objective' }, state: {}, request: { body: { input: 'continue' } } }
+    await mod[method](ctx)
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toMatchObject({ code: 'native_session_missing', error: expect.stringContaining('session not found'), opencodeSessionId: 'ses_missing', workspace: '/project', modelRoute: route, model: { providerID: 'magpie-opencode-codex', id: 'codex/exact' } })
+    expect(JSON.stringify(ctx.body)).not.toContain('private diagnostics')
+    expect(localCreateSessionMock).not.toHaveBeenCalled()
+    expect(localUpdateSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('returns structured service-unavailable errors with persisted identity and no local fallback', async () => {
+    getSessionMock.mockReturnValue({ id: 'objective', profile: 'default', agent: 'opencode', agent_native_session_id: 'ses_existing', modelRoute: { agentId: 'opencode', routeId: 'codex', modelId: 'codex/exact' } })
+    nativeOpenCodeMocks.send.mockRejectedValue(new Error('Native OpenCode 2.0.20 service unavailable; no runtime was started'))
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { params: { id: 'objective' }, state: {}, request: { body: { input: 'continue' } } }
+    await mod.continueNativeOpenCode(ctx)
+    expect(ctx.status).toBe(503)
+    expect(ctx.body).toMatchObject({ code: 'native_service_unavailable', error: expect.stringContaining('service unavailable'), opencodeSessionId: 'ses_existing', model: { providerID: 'magpie-opencode-codex', id: 'codex/exact' } })
+    expect(localCreateSessionMock).not.toHaveBeenCalled()
+    expect(localUpdateSessionMock).not.toHaveBeenCalled()
   })
 
   it('returns shared session agent and workspace metadata without account secrets', async () => {

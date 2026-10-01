@@ -183,6 +183,55 @@ describe('native OpenCode Fast V1', () => {
     expect(api.session.create).toHaveBeenCalledTimes(1)
   })
 
+  it('preserves identity on native service outage and recovers without creating or switching a session', async () => {
+    const first = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'start', modelRoute: route })
+    sdk.discover.mockResolvedValueOnce(undefined)
+    await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', text: 'continue', continueOnly: true })).rejects.toThrow('service unavailable')
+    expect(api.session.create).toHaveBeenCalledTimes(1)
+    expect(api.session.prompt).toHaveBeenCalledTimes(1)
+    expect(store.getSession('objective')?.agent_native_session_id).toBe(first.opencodeSessionId)
+    const recovered = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', text: 'continue', continueOnly: true })
+    expect(recovered.opencodeSessionId).toBe(first.opencodeSessionId)
+    expect(api.session.create).toHaveBeenCalledTimes(1)
+    expect(api.session.switchModel).not.toHaveBeenCalled()
+  })
+
+  it('projects a provider outage with exact intent and never exposes provider bodies or stale success text', async () => {
+    const first = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'start', modelRoute: route })
+    nativeSessions.get(first.opencodeSessionId).outcome = 'failed'
+    api.message.list.mockResolvedValueOnce({ data: [{ type: 'assistant', content: [{ type: 'text', text: 'stale success' }], error: { type: 'api', message: 'private upstream details', body: 'private secret' } }] })
+    const failed = await adapter.readNativeOpenCodeState('objective')
+    expect(failed).toMatchObject({ opencodeSessionId: first.opencodeSessionId, model: { providerID: 'magpie-opencode-codex', id: 'codex/exact' }, outcome: 'failed', output: '', error: 'Magpie upstream/provider failure (api); no provider/model fallback was used' })
+    expect(JSON.stringify(failed)).not.toMatch(/private|stale success/)
+    expect(api.session.create).toHaveBeenCalledTimes(1)
+    expect(api.session.switchModel).not.toHaveBeenCalled()
+  })
+
+  it('does not emit stale success when native execution fails before creating an assistant', async () => {
+    const first = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'start', modelRoute: route })
+    nativeSessions.get(first.opencodeSessionId).outcome = 'failed'
+    expect(await adapter.readNativeOpenCodeState('objective')).toMatchObject({ output: '', outcome: 'failed', error: 'Native OpenCode execution failed for the selected provider/model; no fallback was used' })
+  })
+
+  it('redacts unknown transport errors while preserving native identity and exact requested route', () => {
+    store.createSession({ id: 'objective', agent: 'opencode', agent_native_session_id: 'ses_existing', workspace: process.cwd(), modelRoute: route })
+    const failure = adapter.nativeOpenCodeFailure(new Error('Authorization: Bearer private upstream secret'), 'objective')
+    expect(failure).toMatchObject({ status: 502, body: { code: 'native_request_failed', opencodeSessionId: 'ses_existing', workspace: process.cwd(), modelRoute: route, model: { providerID: 'magpie-opencode-codex', id: 'codex/exact' } } })
+    expect(JSON.stringify(failure)).not.toMatch(/Authorization|private upstream secret/)
+  })
+
+  it('emits service-unavailable provenance without admitting work or selecting a fallback', async () => {
+    sdk.discover.mockResolvedValueOnce(undefined)
+    const { handleNativeOpenCodeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-native-opencode-run')
+    const emit = vi.fn()
+    await handleNativeOpenCodeRun({ to: () => ({ emit }) } as any, { join: vi.fn(), data: {} } as any,
+      { session_id: 'objective', input: 'hello', workspace: process.cwd(), modelRoute: route }, 'default', new Map())
+    expect(emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({ code: 'native_service_unavailable', error: expect.stringContaining('service unavailable'), modelRoute: route, model: { providerID: 'magpie-opencode-codex', id: 'codex/exact' } }))
+    expect(api.session.create).not.toHaveBeenCalled()
+    expect(api.session.prompt).not.toHaveBeenCalled()
+    expect(api.session.switchModel).not.toHaveBeenCalled()
+  })
+
   it('uses authenticated discover-only lifecycle and the optional registration file', async () => {
     vi.stubEnv('EKKO_OPENCODE_SERVICE_FILE', '/test/service.json')
     await adapter.nativeOpenCodeClient()

@@ -25,6 +25,30 @@ export function nativeOpenCodeModel(intent: unknown) {
   return { route, model: { providerID: `magpie-${route.agentId}-${route.routeId}`, id: route.modelId } }
 }
 
+/** Bounded, secret-free transport failure with persisted native identity/intent. */
+export function nativeOpenCodeFailure(error: unknown, sessionId: string, intent?: ModelRouteRequest) {
+  const stored = getSession(sessionId)
+  const route = snapshotModelRoute(intent ?? stored?.modelRoute)
+  const name = error instanceof Error ? error.name : ''
+  const unavailable = error instanceof Error && error.message === 'Native OpenCode 2.0.20 service unavailable; no runtime was started'
+  const missing = name === 'SessionNotFoundError'
+  const timedOut = name === 'TimeoutError' || name === 'AbortError'
+  const connection = name === 'TypeError' || name === 'ConnectionError'
+  const status = missing ? 404 : unavailable || connection ? 503 : timedOut ? 504 : 502
+  const message = missing
+    ? 'Native OpenCode session not found; persisted mapping retained, no replacement session created'
+    : unavailable || connection
+      ? 'Native OpenCode service unavailable or connection failed; no runtime was started and no fallback was used'
+      : timedOut
+        ? 'Native OpenCode request timed out; native state must be checked before retrying; no replacement or fallback was used'
+        : 'Native OpenCode request failed; persisted mapping retained, no replacement or fallback was used'
+  return { status, body: {
+    error: message, code: missing ? 'native_session_missing' : unavailable || connection ? 'native_service_unavailable' : timedOut ? 'native_request_timeout' : 'native_request_failed',
+    sessionId, opencodeSessionId: stored?.agent_native_session_id || undefined, workspace: stored?.workspace,
+    modelRoute: route, model: route?.modelId ? { providerID: `magpie-${route.agentId}-${route.routeId}`, id: route.modelId } : undefined,
+  } }
+}
+
 const requestOptions = () => ({ signal: AbortSignal.timeout(15_000) })
 const admissions = new Set<string>()
 
@@ -132,7 +156,10 @@ export async function readNativeOpenCodeState(sessionId: string, client?: OpenCo
     sessionId, opencodeSessionId: session.id, workspace: session.location.directory,
     model: session.model, isWorking: Boolean(active[sessionID]), outcome: session.outcome,
     messageId: latest?.id,
-    output, error: latest?.type === 'assistant' && latest.error ? latest.error.type : undefined,
+    output: session.outcome === 'failed' ? '' : output,
+    error: latest?.type === 'assistant' && latest.error
+      ? `Magpie upstream/provider failure (${latest.error.type}); no provider/model fallback was used`
+      : session.outcome === 'failed' ? 'Native OpenCode execution failed for the selected provider/model; no fallback was used' : undefined,
     diffs: diffs.slice(0, 20).map(diff => ({ file: diff.file, additions: diff.additions, deletions: diff.deletions })),
   }
 }

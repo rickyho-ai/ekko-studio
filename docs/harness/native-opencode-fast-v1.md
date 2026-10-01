@@ -33,6 +33,16 @@ external `@opencode/ai` import before sending a request. The native package uses
 the same Messages endpoint; the explicit provider/model IDs and session-header
 hook stay unchanged. Hermes provider configuration is outside this hardening.
 
+Native read/continue failures return bounded JSON errors with the persisted native
+session ID, workspace and exact requested route. A missing native session returns
+404; failed service discovery/connection returns 503; a timed-out native request
+returns 504. These failures never start a runtime or replace a session. The chat
+observer carries the same provenance. Provider execution failures expose only a
+stable native error type, not provider bodies/credentials, and do not project
+stale successful assistant text as the failed run's response. Recovery is an
+explicit retry against the same persisted native identity after the dependency
+is available again.
+
 ## Native Magpie configuration — approval required
 
 Nothing in this change applies configuration to the live service. Generate a

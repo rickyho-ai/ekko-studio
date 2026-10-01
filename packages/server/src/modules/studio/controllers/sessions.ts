@@ -1,6 +1,6 @@
 import { businessEvents } from '../services/webhooks/business-events'
 import { snapshotModelRoute } from '../contracts/model-route'
-import { readNativeOpenCodeState, sendNativeOpenCodePrompt } from '../services/chat-run/native-opencode'
+import { nativeOpenCodeFailure, readNativeOpenCodeState, sendNativeOpenCodePrompt } from '../services/chat-run/native-opencode'
 
 import { ensureBusinessConsumers } from '../services/webhooks/business-consumers'
 import { authorizeSessionShare, authorizeShareFile } from '../services/session-shares/access'
@@ -1596,7 +1596,8 @@ export async function nativeOpenCodeState(ctx: any) {
   if (!session) { ctx.status = 404; ctx.body = { error: 'Session not found' }; return }
   if (denySessionAccess(ctx, session)) return
   if (ctx.state?.sessionShare) { ctx.status = 403; ctx.body = { error: 'Native OpenCode Fast V1 does not support shared-session access' }; return }
-  ctx.body = await readNativeOpenCodeState(session.id)
+  try { ctx.body = await readNativeOpenCodeState(session.id) }
+  catch (error) { const failure = nativeOpenCodeFailure(error, session.id); ctx.status = failure.status; ctx.body = failure.body }
 }
 
 export async function continueNativeOpenCode(ctx: any) {
@@ -1606,8 +1607,10 @@ export async function continueNativeOpenCode(ctx: any) {
   if (ctx.state?.sessionShare) { ctx.status = 403; ctx.body = { error: 'Native OpenCode Fast V1 does not support shared-session access' }; return }
   const text = ctx.request.body?.input
   if (typeof text !== 'string' || !text.trim()) { ctx.status = 400; ctx.body = { error: 'input is required' }; return }
-  ctx.body = await sendNativeOpenCodePrompt({ sessionId: session.id, profile: session.profile,
-    text, modelRoute: session.modelRoute, continueOnly: true })
+  try {
+    ctx.body = await sendNativeOpenCodePrompt({ sessionId: session.id, profile: session.profile,
+      text, modelRoute: session.modelRoute, continueOnly: true })
+  } catch (error) { const failure = nativeOpenCodeFailure(error, session.id); ctx.status = failure.status; ctx.body = failure.body }
 }
 
 export async function setModel(ctx: any) {
