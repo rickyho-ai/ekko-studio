@@ -1,6 +1,7 @@
 import { socialMessagesKo } from '../social-messages-locales'
 
 export default {
+  modelRouteCatalog: { failed: 'Magpie 모델을 불러올 수 없습니다. 다시 시도하세요.', empty: '이 경로에 사용 가능한 모델이 없습니다.' },
   modelRoute: { caller: 'Magpie 호출자 (선택)', route: '모델 경로', model: '명시적 게이트웨이 모델' },
   jev: {
     browserAutomation: "내장 브라우저 자동화",

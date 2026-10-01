@@ -6,6 +6,8 @@ export { getChatRunServer, setChatRunServer } from '../public/chat-run'
 
 export const chatRunRoutes = new Router()
 
+chatRunRoutes.get('/api/studio/chat-run/model-route/models', ctrl.modelRouteModels)
+
 chatRunRoutes.post('/api/studio/task-plans/update', updateTaskPlan)
 chatRunRoutes.post('/api/studio/clarifications/request', requestClarification)
 

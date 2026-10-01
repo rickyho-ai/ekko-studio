@@ -2,6 +2,7 @@ import { socialMessagesEn } from '../social-messages'
 
 export default {
   modelRoute: { caller: 'Magpie caller (optional)', route: 'Model route', model: 'Explicit gateway model' },
+  modelRouteCatalog: { failed: 'Unable to load Magpie models. Retry to continue.', empty: 'No models available for this route.' },
   jev: {
     browserAutomation: "Built-in browser automation",
     browserAutomationHint: "Optional assessments use this Profile’s saved JEV connection and take effect on the next assessment. Rendered page labels are sent to JEV; input values are excluded. Disabled, unavailable or uncertain assessments preserve the original flow.",

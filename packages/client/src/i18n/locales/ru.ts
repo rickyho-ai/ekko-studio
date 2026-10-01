@@ -1,6 +1,7 @@
 import { socialMessagesRu } from '../social-messages-locales'
 
 export default {
+  modelRouteCatalog: { failed: 'Не удалось загрузить модели Magpie. Повторите попытку.', empty: 'Нет доступных моделей для этого маршрута.' },
   modelRoute: { caller: 'Идентификатор Magpie (необязательно)', route: 'Маршрут модели', model: 'Явная модель шлюза' },
   jev: {
     browserAutomation: "Автоматизация встроенного браузера",

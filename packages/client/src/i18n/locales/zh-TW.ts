@@ -1,6 +1,7 @@
 import { socialMessagesZhTw } from '../social-messages'
 
 export default {
+  modelRouteCatalog: { failed: '無法載入 Magpie 模型。請重試後繼續。', empty: '此路由沒有可用模型。' },
   modelRoute: { caller: 'Magpie 呼叫身分（可選）', route: '模型路由', model: '指定閘道模型' },
   jev: {
     browserAutomation: "內建瀏覽器自動化",

@@ -1,6 +1,7 @@
 import { socialMessagesAr } from '../social-messages-locales'
 
 export default {
+  modelRouteCatalog: { failed: 'تعذر تحميل نماذج Magpie. أعد المحاولة للمتابعة.', empty: 'لا توجد نماذج متاحة لهذا المسار.' },
   modelRoute: { caller: 'هوية Magpie (اختياري)', route: 'مسار النموذج', model: 'نموذج البوابة المحدد' },
   jev: {
     browserAutomation: "أتمتة المتصفح المدمج",

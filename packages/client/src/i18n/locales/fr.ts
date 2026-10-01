@@ -1,6 +1,7 @@
 import { socialMessagesFr } from '../social-messages-locales'
 
 export default {
+  modelRouteCatalog: { failed: 'Impossible de charger les modèles Magpie. Réessayez pour continuer.', empty: 'Aucun modèle disponible pour cette route.' },
   modelRoute: { caller: 'Appelant Magpie (facultatif)', route: 'Route du modèle', model: 'Modèle explicite de la passerelle' },
   jev: {
     browserAutomation: "Automatisation du navigateur intégré",

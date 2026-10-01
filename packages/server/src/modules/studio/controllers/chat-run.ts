@@ -7,6 +7,16 @@ import { getChatRunServer } from '../public/chat-run'
 import { resolveModelExecutionIdentity } from '../contracts/runs/model-execution-identity'
 import { snapshotModelRoute } from '../contracts/model-route'
 import { getSession } from '../public/sessions'
+import { fetchMagpieModelIds } from '../services/chat-run/model-config'
+
+export async function modelRouteModels(ctx: Context): Promise<void> {
+  try {
+    ctx.body = { models: await fetchMagpieModelIds() }
+  } catch {
+    ctx.status = 503
+    ctx.body = { error: 'Magpie model catalog unavailable' }
+  }
+}
 
 type ChatRunPayload = Record<string, unknown> & {
   input?: unknown

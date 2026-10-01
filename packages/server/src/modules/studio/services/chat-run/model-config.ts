@@ -2,6 +2,20 @@ import { readConfigYamlForProfile } from '../../public/profile-config'
 
 export type RunModelGroup = { provider: string; models: string[] }
 
+export async function fetchMagpieModelIds(): Promise<string[]> {
+  const response = await fetch('http://127.0.0.1:3425/v1/models', {
+    method: 'GET',
+    signal: AbortSignal.timeout(5_000),
+    redirect: 'error',
+  })
+  if (!response.ok) throw new Error('Magpie model catalog unavailable')
+  const catalog = await response.json() as { data?: Array<{ id?: unknown }> }
+  if (!Array.isArray(catalog?.data) || catalog.data.some(model => !model || typeof model.id !== 'string' || !model.id)) {
+    throw new Error('Invalid Magpie model catalog')
+  }
+  return [...new Set(catalog.data.map(model => model.id as string))]
+}
+
 function runtimeProvider(provider: string): string {
   return provider === 'claude-oauth' ? 'anthropic' : provider
 }

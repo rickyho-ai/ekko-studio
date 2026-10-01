@@ -63,6 +63,7 @@ import PageSidebarFooter from "@/components/layout/PageSidebarFooter.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { useCollapsedProviderGroups } from "@/composables/useCollapsedProviderGroups";
+import { useModelRouteCatalog } from "@/composables/useModelRouteCatalog";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth, isKeylessModelProvider, openCodeFreeApiMode } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
@@ -855,7 +856,7 @@ const newChatApiKey = ref<string>("");
 const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
 const newChatModelRouteAgent = ref<'opencode' | 'hermes'>();
 const newChatModelRouteFamily = ref<'codex' | 'claude'>();
-const newChatModelRouteModel = ref('');
+const newChatModelRouteModel = ref<string | null>('');
 const newChatWorkspace = ref("");
 const newChatAgentPreset = ref<string>();
 const newChatPresetReady = ref(false);
@@ -1131,6 +1132,12 @@ const isNewChatGlobalCodingAgent = computed(() =>
   isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "global",
 );
 const newChatUsesModelRoute = computed(() => newChatAgent.value === 'ekko-agent' && Boolean(newChatModelRouteAgent.value));
+const modelRouteCatalog = useModelRouteCatalog(
+  computed(() => showNewChatModal.value && newChatUsesModelRoute.value),
+  newChatModelRouteFamily,
+  newChatModelRouteModel,
+);
+const { options: modelRouteOptions, loading: modelRouteLoading, failed: modelRouteFailed } = modelRouteCatalog;
 const newChatUsesProviderModel = computed(() => !isNewChatGlobalCodingAgent.value && !newChatUsesModelRoute.value);
 const newChatNeedsBaseUrl = computed(() =>
   !newChatUsesModelRoute.value && isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
@@ -1152,7 +1159,7 @@ const canConfirmNewChat = computed(() => {
   if (newChatAgent.value === "dsh" && (!newChatAgentPreset.value || !newChatPresetReady.value)) return false;
   if (!newChatProfile.value) return false;
   if (newChatAgent.value === 'ekko-agent' && newChatModelRouteAgent.value) {
-    return Boolean(newChatModelRouteFamily.value && newChatModelRouteModel.value.trim());
+    return Boolean(newChatModelRouteFamily.value && modelRouteCatalog.selectionValid.value);
   }
   if (!newChatUsesProviderModel.value) return true;
   if (!newChatProvider.value || !newChatModel.value) return false;
@@ -1382,7 +1389,7 @@ async function confirmNewChat() {
   const session = chatStore.newChat({
     modelRoute: newChatAgent.value === 'ekko-agent' && newChatModelRouteAgent.value && newChatModelRouteFamily.value
       ? { agentId: newChatModelRouteAgent.value, routeId: newChatModelRouteFamily.value,
-          ...(newChatModelRouteModel.value !== '' ? { modelId: newChatModelRouteModel.value } : {}) }
+          ...(newChatModelRouteModel.value ? { modelId: newChatModelRouteModel.value } : {}) }
       : undefined,
     profile: newChatProfile.value,
     provider: isGlobalCodingAgent ? undefined : newChatProvider.value,
@@ -3046,7 +3053,12 @@ async function handleSessionModelCustomSubmit() {
             </label>
             <label v-if="newChatModelRouteAgent" class="new-chat-field">
               <span class="new-chat-label">{{ t('modelRoute.model') }}</span>
-              <NInput v-model:value="newChatModelRouteModel" />
+              <NSelect v-model:value="newChatModelRouteModel" :options="modelRouteOptions"
+                :loading="modelRouteLoading" :disabled="modelRouteLoading || modelRouteFailed || !newChatModelRouteFamily"
+                filterable clearable />
+              <span v-if="modelRouteFailed" role="alert" class="new-chat-field-hint">{{ t('modelRouteCatalog.failed') }}</span>
+              <span v-else-if="newChatModelRouteFamily && !modelRouteLoading && !modelRouteOptions.length" class="new-chat-field-hint">{{ t('modelRouteCatalog.empty') }}</span>
+              <NButton v-if="modelRouteFailed" size="small" @click="modelRouteCatalog.load">{{ t('common.retry') }}</NButton>
             </label>
           </template>
           <label v-if="newChatUsesProviderModel && newChatModelKind === 'model'" class="new-chat-field">
