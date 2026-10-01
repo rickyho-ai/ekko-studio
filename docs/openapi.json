@@ -13075,6 +13075,32 @@
         "x-session-share-permission": "upload"
       }
     },
+    "/api/studio/chat-run/model-route/models": {
+      "get": {
+        "tags": [
+          "Chat Run"
+        ],
+        "summary": "Get models",
+        "description": "GET /api/studio/chat-run/model-route/models",
+        "operationId": "modelRouteModels",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/studio/chat-run/runs": {
       "post": {
         "tags": [
