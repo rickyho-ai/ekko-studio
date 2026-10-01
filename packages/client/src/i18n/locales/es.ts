@@ -1,6 +1,7 @@
 import { socialMessagesEs } from '../social-messages-locales'
 
 export default {
+  modelRoute: { caller: 'Identidad Magpie (opcional)', route: 'Ruta del modelo', model: 'Modelo explícito de la pasarela' },
   jev: {
     browserAutomation: "Automatización del navegador integrado",
     browserAutomationHint: "Las evaluaciones opcionales usan la conexión JEV guardada de este perfil desde la siguiente evaluación. Se envían las etiquetas visibles, sin los valores introducidos. Si se desactiva, no está disponible o hay dudas, se mantiene el flujo original.",

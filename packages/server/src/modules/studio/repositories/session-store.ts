@@ -9,9 +9,11 @@ import { copyCompressionSnapshot } from './compression-snapshot'
 import { recordSkillUsageMessage } from './skill-usage-store'
 import { getRecordedSessionTokensBatch } from './usage-store'
 import { agentFamilyForRuntime, isAgentRuntime } from '../contracts/agents/runtime'
+import { snapshotModelRoute, type ModelRouteRequest } from '../contracts/model-route'
 
 // Re-export types for compatibility with sessions-db.ts consumers
 export interface HermesSessionRow {
+  modelRoute?: ModelRouteRequest
   id: string
   profile: string
   source: string
@@ -146,6 +148,7 @@ function mapStoredSessionRow(row: Record<string, unknown>): HermesSessionRow {
     model: String(row.model || ''),
     provider: String(row.provider || ''),
     api_mode: String(row.api_mode || ''),
+    modelRoute: row.model_route == null ? undefined : snapshotModelRoute(JSON.parse(String(row.model_route))),
     reasoning_effort: String(row.reasoning_effort || ''),
     title,
     parent_session_id: row.parent_session_id != null ? String(row.parent_session_id) : null,
@@ -203,6 +206,7 @@ function mapMessageRow(row: Record<string, unknown>): HermesMessageRow {
 // --- Session CRUD ---
 
 export function createSession(data: {
+  modelRoute?: ModelRouteRequest
   id: string
   profile?: string
   source?: string
@@ -230,6 +234,7 @@ export function createSession(data: {
       id: data.id, profile: data.profile || 'default', source, agent,
       agent_mode: data.agent_mode || '',
       agent_preset: data.agent_preset || '',
+      modelRoute: snapshotModelRoute(data.modelRoute),
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
       user_id: data.user_id == null ? null : String(data.user_id), model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', reasoning_effort: data.reasoning_effort || '', title: data.title || null,
       parent_session_id: data.parent_session_id || null,
@@ -245,9 +250,10 @@ export function createSession(data: {
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_preset, agent_session_id, agent_native_session_id, user_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, push_enabled)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${SESSIONS_TABLE} (model_route, id, profile, source, agent, agent_mode, agent_preset, agent_session_id, agent_native_session_id, user_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, push_enabled)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
+    data.modelRoute === undefined ? null : JSON.stringify(snapshotModelRoute(data.modelRoute)),
     data.id,
     data.profile || 'default',
     source,
@@ -457,6 +463,11 @@ export function updateSession(id: string, data: Partial<Omit<HermesSessionRow, '
   const fields: string[] = []
   const values: any[] = []
   for (const [key, val] of Object.entries(data)) {
+    if (key === 'modelRoute') {
+      fields.push('"model_route" = ?')
+      values.push(val === undefined ? null : JSON.stringify(snapshotModelRoute(val)))
+      continue
+    }
     if (key === 'id' || key === 'profile') continue
     // Skip last_active and ended_at - handle them separately below
     if (key === 'last_active' || key === 'ended_at') continue

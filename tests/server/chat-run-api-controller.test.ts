@@ -67,6 +67,22 @@ describe('chat-run HTTP API controller', () => {
     expect(socket.emit).not.toHaveBeenCalledWith('run', expect.anything())
   })
 
+  it('passes explicit Ekko route intent without requiring a provider/account execution identity', async () => {
+    const socket = makeSocket()
+    ioMock.mockReturnValue(socket)
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
+    const modelRoute = { agentId: 'hermes', routeId: 'codex', modelId: 'exact-model' }
+    const ctx = { get: vi.fn(() => ''), state: { profile: { name: 'default' } },
+      request: { body: { input: 'hello', session_id: 'route-api', source: 'coding_agent', coding_agent_id: 'ekko-agent', modelRoute } },
+      status: 200, body: undefined as any }
+    const pending = runOnce(ctx as any)
+    await new Promise(resolve => setImmediate(resolve))
+    socket.emitNative('connect')
+    await pending
+    expect(socket.emit).toHaveBeenCalledWith('run', expect.objectContaining({ session_id: 'route-api', coding_agent_id: 'ekko-agent', modelRoute }))
+    expect(ctx.status).toBe(200)
+  })
+
   it.each([
     { provider: 'custom:corp-codex' },
     { model: 'gpt-5.6-terra' },

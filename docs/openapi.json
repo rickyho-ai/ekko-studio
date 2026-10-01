@@ -20247,6 +20247,10 @@
                   "model": {
                     "type": "string"
                   },
+                  "modelRoute": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "provider": {
                     "type": "string"
                   }

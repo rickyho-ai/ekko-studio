@@ -1,6 +1,7 @@
 import { socialMessagesDe } from '../social-messages-locales'
 
 export default {
+  modelRoute: { caller: 'Magpie-Aufrufer (optional)', route: 'Modellroute', model: 'Explizites Gateway-Modell' },
   jev: {
     browserAutomation: "Automatisierung des integrierten Browsers",
     browserAutomationHint: "Optionale Bewertungen verwenden die gespeicherte JEV-Verbindung dieses Profils ab der nächsten Bewertung. Sichtbare Beschriftungen werden an JEV gesendet, Eingabewerte nicht. Bei deaktivierter, nicht verfügbarer oder unsicherer Bewertung bleibt der bisherige Ablauf erhalten.",

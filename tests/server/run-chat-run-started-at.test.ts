@@ -187,6 +187,53 @@ describe('ChatRunSocket reports when the run started', () => {
     expect(resumed![1]).toMatchObject({ isWorking: true, runStartedAt: startedAt })
   })
 
+  it('captures ordinary queued intent and restores it on dequeue without sharing mutable state', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { handlers, io, socket } = makeServerHarness()
+    ;(socket.data as any).user = { id: 1, username: 'admin', role: 'super_admin' }
+    const server = new ChatRunSocket(io as any)
+    const state = { messages: [], events: [], queue: [] as any[], isWorking: true, profile: 'default' }
+    ;(server as any).sessionMap.set('queued-intent', state)
+    ;(server as any).onConnection(socket)
+    const intent = { agentId: 'hermes' as const, routeId: 'codex' as const, modelId: 'origin' }
+    await handlers.get('run')?.({ session_id: 'queued-intent', input: 'hello', source: 'coding_agent', coding_agent_id: 'ekko-agent', modelRoute: intent })
+    intent.modelId = 'later'
+    expect(state.queue[0]?.modelRoute).toEqual({ agentId: 'hermes', routeId: 'codex', modelId: 'origin' })
+    const dispatch = vi.spyOn(server as any, 'handleRun').mockResolvedValue(undefined)
+    ;(server as any).runQueuedItem(socket, 'queued-intent', state.queue[0])
+    expect(dispatch.mock.calls[0][1]).toMatchObject({ session_id: 'queued-intent', modelRoute: { agentId: 'hermes', routeId: 'codex', modelId: 'origin' } })
+    expect((dispatch.mock.calls[0][1] as any).modelRoute).not.toBe(state.queue[0].modelRoute)
+  })
+
+  it('fails closed rather than ignoring a Magpie opt-in on a non-Ekko runtime', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    await (server as any).handleRun(socket, { input: 'hello', session_id: 'unsupported-route', source: 'cli',
+      modelRoute: { agentId: 'opencode', routeId: 'codex', modelId: 'exact' } }, 'default')
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({ error: expect.stringContaining('requires the Ekko runtime') }))
+  })
+
+  it('returns persisted semantic intent in resume settings independently of runtime identity', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { handlers, io, socket } = makeServerHarness()
+    ;(socket.data as any).user = { id: 1, username: 'admin', role: 'super_admin' }
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('route-resume', { messages: [], events: [], queue: [], isWorking: false, profile: 'default' })
+    const intent = { agentId: 'opencode', routeId: 'claude', modelId: 'exact-model' }
+    getSessionMock.mockReturnValueOnce({ id: 'route-resume', profile: 'default', source: 'coding_agent', model: 'other-model', provider: 'original', modelRoute: intent } as any)
+    // Resume performs access checks before reading the metadata; supply the same persisted row throughout.
+    const original = getSessionMock.getMockImplementation()!
+    getSessionMock.mockImplementation(() => ({ id: 'route-resume', profile: 'default', source: 'coding_agent', model: 'other-model', provider: 'original', modelRoute: intent } as any))
+    try {
+      ;(server as any).onConnection(socket)
+      await handlers.get('resume')?.({ session_id: 'route-resume' })
+      expect(socket.emit.mock.calls.find(call => call[0] === 'resumed')?.[1]).toMatchObject({ session_id: 'route-resume', modelRoute: intent })
+    } finally {
+      getSessionMock.mockImplementation(original)
+    }
+  })
+
   it.each([
     { activeRunMarker: 'turn-current', responseRun: { runMarker: 'older-response' } },
     { responseRun: { runMarker: 'turn-current' } },

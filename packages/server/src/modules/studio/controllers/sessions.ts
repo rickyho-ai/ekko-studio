@@ -1,4 +1,5 @@
 import { businessEvents } from '../services/webhooks/business-events'
+import { snapshotModelRoute } from '../contracts/model-route'
 import { ensureBusinessConsumers } from '../services/webhooks/business-consumers'
 import { authorizeSessionShare, authorizeShareFile } from '../services/session-shares/access'
 import { sessionShareService } from '../services/session-shares/service'
@@ -424,6 +425,7 @@ export async function listConversations(ctx: any) {
     model: s.model,
     provider: s.provider,
     api_mode: s.api_mode,
+    modelRoute: s.modelRoute,
     title: s.title,
     started_at: s.started_at,
     ended_at: s.ended_at,
@@ -1588,7 +1590,36 @@ function normalizeSessionApiMode(value: unknown): SessionProviderApiMode | undef
 }
 
 export async function setModel(ctx: any) {
-  const { model, provider, apiMode, api_mode } = ctx.request.body as { model?: string; provider?: string; apiMode?: SessionProviderApiMode; api_mode?: SessionProviderApiMode }
+  if (Object.hasOwn(ctx.request.body, 'modelRoute') && !Object.hasOwn(ctx.request.body, 'model')) {
+    const existing = localGetSession(ctx.params.id)
+    if (!existing) {
+      ctx.status = 404
+      ctx.body = { error: 'Session not found' }
+      return
+    }
+    if (denySessionAccess(ctx, existing)) return
+    let modelRoute
+    try {
+      modelRoute = snapshotModelRoute(ctx.request.body.modelRoute)
+      if (!modelRoute) throw new Error('Invalid modelRoute')
+    } catch (err) {
+      ctx.status = 400
+      ctx.body = { error: err instanceof Error ? err.message : String(err) }
+      return
+    }
+    if (ctx.state?.sessionShare) authorizeSessionShare(ctx.state.sessionShare, 'switchModel', ctx.params.id)
+    localUpdateSession(ctx.params.id, { modelRoute })
+    getChatRunServer()?.emitSessionSettingsUpdated(ctx.params.id, { modelRoute })
+    ctx.body = { ok: true }
+    return
+  }
+  const { model, provider, apiMode, api_mode } = ctx.request.body as {
+    model?: string
+    provider?: string
+    apiMode?: SessionProviderApiMode
+    api_mode?: SessionProviderApiMode
+    modelRoute?: { agentId: 'opencode' | 'hermes'; routeId: 'codex' | 'claude'; modelId?: string }
+  }
   if (!model || typeof model !== 'string') {
     ctx.status = 400
     ctx.body = { error: 'model is required' }
@@ -1607,6 +1638,14 @@ export async function setModel(ctx: any) {
   const cleanModel = model.trim()
   const cleanProvider = (provider || '').trim()
   const cleanApiMode = normalizeSessionApiMode(apiMode ?? api_mode)
+  let modelRoute
+  try {
+    modelRoute = snapshotModelRoute(ctx.request.body.modelRoute)
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { error: err instanceof Error ? err.message : String(err) }
+    return
+  }
   const codingAgentSession = isCodingAgentSession(existing)
   const workspace = !codingAgentSession
     ? await ensureHermesRunWorkspace(profile, existing?.workspace)
@@ -1629,11 +1668,13 @@ export async function setModel(ctx: any) {
   }
   if (ctx.state?.sessionShare) authorizeSessionShare(ctx.state.sessionShare, 'switchModel', id)
   updateSession(id, updates as any)
+  if (modelRoute) updateSession(id, { modelRoute })
   getChatRunServer()?.emitSessionSettingsUpdated(id, {
     model: cleanModel,
     provider: cleanProvider,
     api_mode: updates.api_mode ?? existing?.api_mode ?? '',
     reasoning_effort: updates.reasoning_effort ?? getSession(id)?.reasoning_effort ?? '',
+    ...(modelRoute ? { modelRoute } : {}),
   })
   if (!codingAgentSession) {
     await notifyBridgeSessionModelChanged(id, cleanModel, cleanProvider, profile)

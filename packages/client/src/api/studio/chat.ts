@@ -5,6 +5,7 @@ import { onAuthInvalidated } from '../auth-invalidation'
 import { getBaseUrlValue, getApiKey } from '../client'
 import type { ChatCodingAgentId } from '../coding-agents'
 import type { ProviderApiMode } from './provider-api-mode'
+import type { ModelRouteRequest } from './model-route'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -17,6 +18,7 @@ export interface ChatMessage {
 }
 
 export interface StartRunRequest {
+  modelRoute?: ModelRouteRequest
   input: string | ContentBlock[]
   /** Optional UI/storage representation when model input carries hidden metadata. */
   display_input?: string | ContentBlock[] | null
@@ -57,6 +59,7 @@ export interface StartRunResponse {
 
 // SSE event types from /v1/runs/{id}/events
 export interface RunEvent {
+  modelRoute?: ModelRouteRequest
   event: string
   run_id?: string
   run_marker?: string
@@ -163,6 +166,7 @@ export interface RunEvent {
 }
 
 export interface ResumeSessionPayload {
+  modelRoute?: ModelRouteRequest
   taskPlans?: TaskPlanSnapshot[]
   session_id: string
   messages: any[]

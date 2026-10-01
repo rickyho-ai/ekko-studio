@@ -1,6 +1,7 @@
 import { socialMessagesFr } from '../social-messages-locales'
 
 export default {
+  modelRoute: { caller: 'Appelant Magpie (facultatif)', route: 'Route du modèle', model: 'Modèle explicite de la passerelle' },
   jev: {
     browserAutomation: "Automatisation du navigateur intégré",
     browserAutomationHint: "Les évaluations facultatives utilisent la connexion JEV enregistrée pour ce profil dès la prochaine évaluation. Les libellés visibles sont envoyés à JEV, sans les valeurs saisies. Le fonctionnement habituel est conservé si le service est désactivé, indisponible ou incertain.",
