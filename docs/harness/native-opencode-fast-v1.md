@@ -26,6 +26,13 @@ timed-out initialization rejects admission; it does not reload config, start a
 runtime, replace a session, or choose another provider/model. The global native
 config remains the owner of durable provider registration.
 
+For `magpie-opencode-claude`, use the bundled
+`@opencode/ai/providers/anthropic` package with Magpie's `/v1` base URL. In the
+compiled 2.0.20 service, `anthropic-compatible` falls through to an unresolved
+external `@opencode/ai` import before sending a request. The native package uses
+the same Messages endpoint; the explicit provider/model IDs and session-header
+hook stay unchanged. Hermes provider configuration is outside this hardening.
+
 ## Native Magpie configuration — approval required
 
 Nothing in this change applies configuration to the live service. Generate a

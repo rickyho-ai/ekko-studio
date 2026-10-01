@@ -53,7 +53,7 @@ async function assertNativeMagpieModel(api: OpenCodeClient, directory: string, r
   const selected = catalog.data.find(candidate => candidate.providerID === model.providerID && candidate.id === model.id && candidate.enabled)
   if (!selected || selected.modelID !== model.id) throw new Error('Explicit Magpie model is unavailable or aliased in native OpenCode; no fallback was used')
   if (!plugins.data.some(plugin => plugin.id === 'ekko.native-magpie' && plugin.state.status === 'active')) throw new Error('Native OpenCode Magpie session-header hook is not active')
-  const expectedPackage = route.routeId === 'claude' ? '@opencode/ai/providers/anthropic-compatible' : '@opencode/ai/providers/openai/responses'
+  const expectedPackage = route.routeId === 'claude' ? '@opencode/ai/providers/anthropic' : '@opencode/ai/providers/openai/responses'
   if (provider.data.settings?.baseURL !== 'http://127.0.0.1:3425/v1' || provider.data.package !== expectedPackage) throw new Error('Native OpenCode Magpie provider endpoint/protocol mismatch')
 }
 

@@ -108,6 +108,23 @@ describe('native OpenCode Fast V1', () => {
     expect(api.session.create).toHaveBeenCalledTimes(1)
   })
 
+  it('admits exact Claude intent only with the bundled native Messages package', async () => {
+    const claudeRoute = { agentId: 'opencode' as const, routeId: 'claude' as const, modelId: 'claude/exact' }
+    const model = { providerID: 'magpie-opencode-claude', id: 'claude/exact' }
+    api.model.list.mockResolvedValue({ data: [{ ...model, modelID: model.id, enabled: true }] })
+    api.provider.get.mockResolvedValueOnce({ data: { package: '@opencode/ai/providers/anthropic-compatible', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } })
+    await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: claudeRoute })).rejects.toThrow('endpoint/protocol mismatch')
+    expect(api.session.create).not.toHaveBeenCalled()
+    expect(api.session.prompt).not.toHaveBeenCalled()
+    api.provider.get.mockResolvedValue({ data: { package: '@opencode/ai/providers/anthropic', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } })
+    const admitted = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: claudeRoute })
+    expect(api.session.create).toHaveBeenCalledWith(expect.objectContaining({ model }), expect.any(Object))
+    expect(api.provider.get).toHaveBeenLastCalledWith({ providerID: model.providerID, location: { directory: process.cwd() } }, expect.any(Object))
+    expect(api.session.switchModel).not.toHaveBeenCalled()
+    expect(admitted.modelRoute).toEqual(claudeRoute)
+    expect(store.getSession('objective')?.modelRoute).toEqual(claudeRoute)
+  })
+
   it('waits for cold provider registration after service restart before continuing the same session', async () => {
     const first = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'start', modelRoute: route })
     vi.resetModules()

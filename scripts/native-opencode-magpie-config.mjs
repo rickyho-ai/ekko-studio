@@ -11,9 +11,11 @@ export function nativeMagpieConfig(ids) {
       if (!Object.keys(models).length) continue
       providers[`magpie-${caller}-${route}`] = {
         name: `Magpie ${caller} ${route}`,
-        // 2.0.20 bundles openai/responses; compatible/responses falls through to
-        // an unresolved external import from the compiled native service.
-        package: route === 'claude' ? '@opencode/ai/providers/anthropic-compatible' : '@opencode/ai/providers/openai/responses',
+        // 2.0.20's compiled service resolves these native packages internally;
+        // compatible aliases can fall through to an unresolved external import.
+        package: route === 'claude'
+          ? (caller === 'opencode' ? '@opencode/ai/providers/anthropic' : '@opencode/ai/providers/anthropic-compatible')
+          : '@opencode/ai/providers/openai/responses',
         settings: { baseURL: 'http://127.0.0.1:3425/v1', apiKey: `magpie-${caller}`, transport: 'http' },
         headers: { authorization: `Bearer magpie-${caller}` },
         models,
