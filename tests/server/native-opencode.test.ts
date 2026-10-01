@@ -47,7 +47,7 @@ describe('native OpenCode Fast V1', () => {
         diff: vi.fn(async () => [{ file: 'src/file.ts', additions: 1, deletions: 0, diff: 'not mirrored' }]),
       },
       model: { list: vi.fn(async () => ({ data: [{ providerID: 'magpie-opencode-codex', id: 'codex/exact', modelID: 'codex/exact', enabled: true }] })) },
-      plugin: { list: vi.fn(async () => ({ data: [{ id: 'ekko.native-magpie', state: { status: 'active' } }] })) },
+      plugin: { list: vi.fn(async () => ({ data: [{ id: 'opencode.config.provider', state: { status: 'active' } }, { id: 'ekko.native-magpie', state: { status: 'active' } }] })) },
       provider: { get: vi.fn(async () => ({ data: { package: '@opencode/ai/providers/openai/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } })) },
       message: { list: vi.fn(async () => ({ data: [{ type: 'assistant', content: [{ type: 'text', text: 'done' }] }] })) },
     }
@@ -90,7 +90,7 @@ describe('native OpenCode Fast V1', () => {
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('unavailable')
     api.model.list.mockResolvedValueOnce({ data: [{ providerID: 'magpie-opencode-codex', id: 'codex/exact', modelID: 'codex/alias', enabled: true }] })
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('aliased')
-    api.plugin.list.mockResolvedValueOnce({ data: [] })
+    api.plugin.list.mockResolvedValueOnce({ data: [{ id: 'opencode.config.provider', state: { status: 'active' } }] })
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('hook is not active')
     api.provider.get.mockResolvedValueOnce({ data: { settings: { baseURL: 'https://other' } } })
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('endpoint/protocol')
@@ -106,6 +106,55 @@ describe('native OpenCode Fast V1', () => {
     await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: '/tmp', text: 'continue' })).rejects.toThrow('authoritative')
     expect(store.getSession('objective')?.agent_native_session_id).toBe(first.opencodeSessionId)
     expect(api.session.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for cold provider registration after service restart before continuing the same session', async () => {
+    const first = await adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'start', modelRoute: route })
+    vi.resetModules()
+    const reopened = await import('../../packages/server/src/modules/studio/services/chat-run/native-opencode')
+    let ready = false
+    const settledPlugins = await api.plugin.list()
+    api.plugin.list.mockImplementationOnce(async () => ({ data: [] }))
+      .mockImplementationOnce(async () => { ready = true; return settledPlugins })
+    const settledModels = await api.model.list()
+    api.model.list.mockImplementation(async () => {
+      expect(ready).toBe(true)
+      return settledModels
+    })
+    api.provider.get.mockImplementation(async () => {
+      if (!ready) throw new Error('Provider not found: magpie-opencode-codex')
+      return { data: { package: '@opencode/ai/providers/openai/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' } } }
+    })
+    const second = await reopened.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', text: 'continue', continueOnly: true })
+    expect(second.opencodeSessionId).toBe(first.opencodeSessionId)
+    expect(api.session.create).toHaveBeenCalledTimes(1)
+    expect(api.session.switchModel).not.toHaveBeenCalled()
+    expect(api.session.prompt).toHaveBeenLastCalledWith({ sessionID: first.opencodeSessionId, text: 'continue', delivery: 'queue' }, expect.any(Object))
+    expect(store.getSession('objective')).toMatchObject({ agent_native_session_id: first.opencodeSessionId, workspace: process.cwd(), modelRoute: route })
+  })
+
+  it('fails closed when provider configuration initialization fails', async () => {
+    api.plugin.list.mockResolvedValueOnce({ data: [{ id: 'opencode.config.provider', state: { status: 'failed', error: 'startup failure' } }] })
+    await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', workspace: process.cwd(), text: 'hello', modelRoute: route })).rejects.toThrow('configuration initialization failed')
+    expect(api.provider.get).not.toHaveBeenCalled()
+    expect(api.session.create).not.toHaveBeenCalled()
+    expect(api.session.prompt).not.toHaveBeenCalled()
+  })
+
+  it('bounds provider startup readiness without replacing a persisted session', async () => {
+    store.createSession({ id: 'objective', agent: 'opencode', agent_native_session_id: 'ses_existing', modelRoute: route })
+    nativeSessions.set('ses_existing', { id: 'ses_existing', location: { directory: process.cwd() }, model: { providerID: 'magpie-opencode-codex', id: 'codex/exact' } })
+    api.plugin.list.mockResolvedValue({ data: [] })
+    // Shorten only the real deadline in this regression; preserve abort behavior.
+    const nativeTimeout = AbortSignal.timeout.bind(AbortSignal)
+    const deadline = vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => nativeTimeout(Math.min(ms, 50)))
+    try {
+      await expect(adapter.sendNativeOpenCodePrompt({ sessionId: 'objective', profile: 'default', text: 'continue', continueOnly: true })).rejects.toThrow('readiness timed out after 15 seconds')
+      expect(api.provider.get).not.toHaveBeenCalled()
+      expect(api.session.create).not.toHaveBeenCalled()
+      expect(api.session.prompt).not.toHaveBeenCalled()
+      expect(store.getSession('objective')?.agent_native_session_id).toBe('ses_existing')
+    } finally { deadline.mockRestore() }
   })
 
   it('retains a mapping on prompt admission failure so retry uses the same session', async () => {

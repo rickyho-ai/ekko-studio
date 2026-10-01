@@ -3,6 +3,7 @@ import { Service } from '@opencode/client/service'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { createHash } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { createSession, getSession, updateSession } from '../../repositories/session-store'
 import { snapshotModelRoute, type ModelRouteRequest } from '../../contracts/model-route'
 
@@ -29,9 +30,24 @@ const admissions = new Set<string>()
 
 async function assertNativeMagpieModel(api: OpenCodeClient, directory: string, route: ModelRouteRequest) {
   const { model } = nativeOpenCodeModel(route)
-  const [catalog, plugins, provider] = await Promise.all([
+  // 2.0.20 returns snapshots before a cold location's config plugins settle.
+  // A persisted provider is not absent merely because startup is still loading it.
+  const startup = requestOptions()
+  let plugins
+  try {
+    while (true) {
+      plugins = await api.plugin.list({ location: { directory } }, startup)
+      const registration = plugins.data.find(plugin => plugin.id === 'opencode.config.provider')
+      if (registration?.state.status === 'failed') throw new Error('Native OpenCode provider configuration initialization failed; prompt not sent')
+      if (registration?.state.status === 'active') break
+      await delay(100, undefined, startup)
+    }
+  } catch (error) {
+    if (startup.signal.aborted) throw new Error('Native OpenCode provider configuration readiness timed out after 15 seconds; prompt not sent')
+    throw error
+  }
+  const [catalog, provider] = await Promise.all([
     api.model.list({ location: { directory } }, requestOptions()),
-    api.plugin.list({ location: { directory } }, requestOptions()),
     api.provider.get({ providerID: model.providerID, location: { directory } }, requestOptions()),
   ])
   const selected = catalog.data.find(candidate => candidate.providerID === model.providerID && candidate.id === model.id && candidate.enabled)

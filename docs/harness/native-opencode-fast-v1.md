@@ -18,6 +18,14 @@ the retired per-conversation launcher. The old launch preparation helpers remain
 for unrelated terminal/configuration functionality; they are not a fallback for
 the native chat path. Existing isolated sessions are not migrated or replaced.
 
+On a cold location after native service restart, OpenCode 2.0.20's model/plugin
+APIs initially return snapshots before config plugin initialization settles.
+Admission waits at most 15 seconds for `opencode.config.provider` to become
+active before checking the exact provider/model and Magpie hook. Failed or
+timed-out initialization rejects admission; it does not reload config, start a
+runtime, replace a session, or choose another provider/model. The global native
+config remains the owner of durable provider registration.
+
 ## Native Magpie configuration — approval required
 
 Nothing in this change applies configuration to the live service. Generate a
