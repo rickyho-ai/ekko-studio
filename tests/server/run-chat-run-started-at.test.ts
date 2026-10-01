@@ -5,6 +5,8 @@ import { runMcpCredentials } from '../../packages/server/src/modules/studio/serv
 const handleBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const resumeBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
+const handleNativeOpenCodeRunMock = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/handle-native-opencode-run', () => ({ handleNativeOpenCodeRun: handleNativeOpenCodeRunMock }))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
 const getRuntimeStateMock = vi.hoisted(() => vi.fn())
@@ -185,6 +187,22 @@ describe('ChatRunSocket reports when the run started', () => {
     const resumed = socket.emit.mock.calls.find((call: any[]) => call[0] === 'resumed')
     expect(resumed).toBeTruthy()
     expect(resumed![1]).toMatchObject({ isWorking: true, runStartedAt: startedAt })
+  })
+
+  it('dispatches normal OpenCode chat directly to the native adapter before legacy MCP/proxy/runtime preparation', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { io, socket } = makeServerHarness()
+    const server = new ChatRunSocket(io as any)
+    handleCodingAgentRunMock.mockClear()
+    handleNativeOpenCodeRunMock.mockClear()
+    const runtime = await import('../../packages/server/src/modules/studio/public/chat-agent-runtime')
+    vi.mocked(runtime.getChatCodingAgentMcpServers).mockClear()
+    const input = { session_id: 'native-objective', input: 'hello', coding_agent_id: 'opencode', source: 'coding_agent',
+      modelRoute: { agentId: 'opencode', routeId: 'codex', modelId: 'codex/exact' } }
+    await (server as any).handleRun(socket, input, 'default')
+    expect(handleNativeOpenCodeRunMock).toHaveBeenCalledWith(expect.anything(), socket, input, 'default', expect.any(Map))
+    expect(handleCodingAgentRunMock).not.toHaveBeenCalled()
+    expect(runtime.getChatCodingAgentMcpServers).not.toHaveBeenCalled()
   })
 
   it('captures ordinary queued intent and restores it on dequeue without sharing mutable state', async () => {

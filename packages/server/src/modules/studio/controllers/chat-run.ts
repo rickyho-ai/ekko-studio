@@ -236,13 +236,14 @@ export async function runOnce(ctx: Context) {
   const isCodingAgentRun = body.source === 'coding_agent' || body.coding_agent_id != null || body.agent_id != null
   if (isCodingAgentRun) {
     try {
-      const route = body.coding_agent_id === 'ekko-agent' || body.agent_id === 'ekko-agent'
+      const nativeOpenCode = body.coding_agent_id === 'opencode' || body.agent_id === 'opencode'
+      const route = nativeOpenCode || body.coding_agent_id === 'ekko-agent' || body.agent_id === 'ekko-agent'
         ? snapshotModelRoute(body.modelRoute === undefined && typeof body.session_id === 'string'
             ? getSession(body.session_id)?.modelRoute : body.modelRoute)
         : undefined
       if (route) {
         payload.modelRoute = route
-      } else {
+      } else if (!nativeOpenCode) {
         const identity = await resolveModelExecutionIdentity({
           profile,
           provider: body.provider,

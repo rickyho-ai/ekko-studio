@@ -1,5 +1,7 @@
 import { businessEvents } from '../services/webhooks/business-events'
 import { snapshotModelRoute } from '../contracts/model-route'
+import { readNativeOpenCodeState, sendNativeOpenCodePrompt } from '../services/chat-run/native-opencode'
+
 import { ensureBusinessConsumers } from '../services/webhooks/business-consumers'
 import { authorizeSessionShare, authorizeShareFile } from '../services/session-shares/access'
 import { sessionShareService } from '../services/session-shares/service'
@@ -1587,6 +1589,25 @@ function normalizeSessionApiMode(value: unknown): SessionProviderApiMode | undef
   return mode === 'chat_completions' || mode === 'codex_responses' || mode === 'anthropic_messages'
     ? mode
     : undefined
+}
+
+export async function nativeOpenCodeState(ctx: any) {
+  const session = localGetSession(ctx.params.id)
+  if (!session) { ctx.status = 404; ctx.body = { error: 'Session not found' }; return }
+  if (denySessionAccess(ctx, session)) return
+  if (ctx.state?.sessionShare) { ctx.status = 403; ctx.body = { error: 'Native OpenCode Fast V1 does not support shared-session access' }; return }
+  ctx.body = await readNativeOpenCodeState(session.id)
+}
+
+export async function continueNativeOpenCode(ctx: any) {
+  const session = localGetSession(ctx.params.id)
+  if (!session) { ctx.status = 404; ctx.body = { error: 'Session not found' }; return }
+  if (denySessionAccess(ctx, session)) return
+  if (ctx.state?.sessionShare) { ctx.status = 403; ctx.body = { error: 'Native OpenCode Fast V1 does not support shared-session access' }; return }
+  const text = ctx.request.body?.input
+  if (typeof text !== 'string' || !text.trim()) { ctx.status = 400; ctx.body = { error: 'input is required' }; return }
+  ctx.body = await sendNativeOpenCodePrompt({ sessionId: session.id, profile: session.profile,
+    text, modelRoute: session.modelRoute, continueOnly: true })
 }
 
 export async function setModel(ctx: any) {

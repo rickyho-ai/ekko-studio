@@ -3946,6 +3946,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 }
 
 export async function startCodingAgentRun(id: string, input: CodingAgentLaunchInput & { sessionId: string }, state?: SessionState): Promise<CodingAgentRunStartResult> {
+  if (id === 'opencode') throw new Error('Per-conversation OpenCode spawning is retired; use the native shared-service adapter')
   const release = beginAgentPreparation(id)
   try { return await startCodingAgentRunInternal(id, input, state) } finally { release() }
 }

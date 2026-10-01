@@ -48,6 +48,8 @@ import {
 } from '../public/chat-agent-runtime'
 import { handleBridgeRun, resumeBridgeRun } from '../services/chat-run/handle-bridge-run'
 import { handleCodingAgentRun } from '../services/chat-run/handle-coding-agent-run'
+import { handleNativeOpenCodeRun } from '../services/chat-run/handle-native-opencode-run'
+import { readNativeOpenCodeState } from '../services/chat-run/native-opencode'
 import { handleEkkoAgentRun, type EkkoAgentRunSocketData } from '../services/chat-run/handle-ekko-agent-run'
 import { snapshotModelRoute, type ModelRouteRequest } from '../contracts/model-route'
 import { handleAbort } from '../services/chat-run/abort'
@@ -1540,6 +1542,11 @@ export class ChatRunSocket {
     pushTargetId?: string,
     modelRouteSnapshot = false,
   ) {
+    if (codingAgentId(data) === 'opencode') {
+      await handleNativeOpenCodeRun(this.nsp, socket, data, profile, this.sessionMap)
+      if (data.session_id) this.dequeueNextQueuedRun(socket, data.session_id, profile)
+      return
+    }
     if (data.modelRoute !== undefined && !isEkkoAgentExecution(data)) {
       const payload = { event: 'run.failed', session_id: data.session_id, queue_id: data.queue_id,
         error: 'modelRoute requires the Ekko runtime; agentId identifies the Magpie caller, not the runtime' }
@@ -2053,6 +2060,25 @@ export class ChatRunSocket {
     options?: { event: 'app.resumed'; cachedId: string },
   ) {
     let state = this.sessionMap.get(sid)
+    const nativeMapping = getSession(sid)
+    if (nativeMapping?.agent === 'opencode' && nativeMapping.agent_native_session_id) {
+      const native = await readNativeOpenCodeState(sid)
+      state = getOrCreateSession(this.sessionMap, sid)
+      state.profile = nativeMapping.profile
+      state.source = 'coding_agent'
+      state.isWorking = native.isWorking
+      socket.emit(options?.event || 'resumed', {
+        session_id: sid, workspace: native.workspace, modelRoute: nativeMapping.modelRoute,
+        isWorking: native.isWorking, events: [], queueLength: state.queue.length,
+        messages: native.output ? [{ id: native.messageId, role: 'assistant', content: native.output }] : [],
+        opencode_session_id: native.opencodeSessionId,
+      })
+      if (native.isWorking && !state.runId) {
+        void handleNativeOpenCodeRun(this.nsp, socket, { session_id: sid, input: '', observeOnly: true }, nativeMapping.profile, this.sessionMap)
+          .then(() => this.dequeueNextQueuedRun(socket, sid, nativeMapping.profile))
+      }
+      return
+    }
     if (!state) {
       state = await loadSessionStateFromDb(sid, this.sessionMap)
       this.sessionMap.set(sid, state)
