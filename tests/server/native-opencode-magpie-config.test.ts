@@ -9,6 +9,11 @@ describe('native OpenCode Magpie configuration', () => {
     const config = nativeMagpieConfig(['codex/exact', 'claude/exact', 'other/ignored'])
     expect(config.model).toBeUndefined()
     expect(Object.keys(config.providers)).toHaveLength(4)
+    for (const provider of Object.values(config.providers) as Array<{ models: Record<string, { capabilities: unknown }> }>) {
+      for (const model of Object.values(provider.models)) {
+        expect(model.capabilities).toEqual({ tools: true, input: ['text'], output: ['text'] })
+      }
+    }
     expect(config.providers['magpie-opencode-codex']).toMatchObject({ package: '@opencode/ai/providers/openai-compatible/responses', settings: { baseURL: 'http://127.0.0.1:3425/v1' }, models: { 'codex/exact': { modelID: 'codex/exact' } } })
     expect(Object.keys(config.providers['magpie-hermes-claude'].models)).toEqual(['claude/exact'])
     expect(JSON.stringify(config)).not.toMatch(/OPENCODE_DB|proxy|token|default_model/)

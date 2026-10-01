@@ -6,7 +6,7 @@ export function nativeMagpieConfig(ids) {
   for (const caller of ['opencode', 'hermes']) {
     for (const route of ['codex', 'claude']) {
       const models = Object.fromEntries(ids.filter(id => id.startsWith(`${route}/`)).map(id => [id, {
-        modelID: id, name: id, capabilities: { tools: true },
+        modelID: id, name: id, capabilities: { tools: true, input: ['text'], output: ['text'] },
       }]))
       if (!Object.keys(models).length) continue
       providers[`magpie-${caller}-${route}`] = {
