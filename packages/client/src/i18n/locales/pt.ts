@@ -1,6 +1,8 @@
 import { socialMessagesPt } from '../social-messages-locales'
 
 export default {
+  modelRouteCatalog: { failed: 'Não foi possível carregar os modelos Magpie. Tente novamente.', empty: 'Nenhum modelo disponível para esta rota.' },
+  modelRoute: { caller: 'Identidade Magpie (opcional)', route: 'Rota do modelo', model: 'Modelo explícito do gateway' },
   jev: {
     browserAutomation: "Automação do navegador integrado",
     browserAutomationHint: "As avaliações opcionais usam a conexão JEV salva neste perfil a partir da próxima avaliação. Os rótulos visíveis são enviados ao JEV, sem os valores digitados. Quando desativado, indisponível ou incerto, o fluxo original é mantido.",

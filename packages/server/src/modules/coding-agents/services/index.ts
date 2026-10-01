@@ -1890,15 +1890,11 @@ function openCodeRuntimeEnv(input: {
   runtimeConfig?: string
   apiKey?: string
 }): Record<string, string> {
-  // OPENCODE_CONFIG_DIR is OpenCode's native global-config override. Keep it
-  // stable at the provider/profile root so OpenCode installs its plugin SDK
-  // once and discovers the same agents, commands, plugins, skills, memory, and
-  // MCP configuration for terminal, chat, group-chat, and workflow launches.
-  //
-  // Per-conversation provider credentials and model selection are applied with
-  // OPENCODE_CONFIG_CONTENT, which OpenCode intentionally loads last. The
-  // native database remains isolated per conversation. Do not redirect HOME or
-  // XDG because that would also redirect git, ssh, npm, and child shells.
+  // Explicit launch/terminal preparation only; normal chat never calls this.
+  // Keep the provider/profile config root stable for terminal config discovery.
+  // Explicit launch credentials/model selection use OPENCODE_CONFIG_CONTENT;
+  // its database path is separate from the normal shared native service.
+  // Do not redirect HOME/XDG, which also affects git, ssh and child shells.
   return {
     OPENCODE_CONFIG_DIR: input.configDir,
     OPENCODE_DB: input.databasePath,
@@ -3413,8 +3409,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       env = {}
     } else if (tool.id === 'opencode') {
       const prepared = await ensureOpenCodeScopedBaseConfigFiles(scope, systemPrompt, workspaceDir)
-      // Share native configuration, but keep each conversation's dynamic
-      // instructions separate from other chats and workflow/group-chat runs.
+      // Explicit terminal launch: share base configuration, isolate its prompt.
       promptFile = join(rootDir, 'hermes-rules.md')
       await writeManagedPromptFile(promptFile, systemPrompt, '')
       env = openCodeRuntimeEnv({
@@ -3946,6 +3941,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 }
 
 export async function startCodingAgentRun(id: string, input: CodingAgentLaunchInput & { sessionId: string }, state?: SessionState): Promise<CodingAgentRunStartResult> {
+  if (id === 'opencode') throw new Error('Per-conversation OpenCode spawning is retired; use the native shared-service adapter')
   const release = beginAgentPreparation(id)
   try { return await startCodingAgentRunInternal(id, input, state) } finally { release() }
 }

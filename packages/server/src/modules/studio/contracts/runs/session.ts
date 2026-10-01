@@ -1,6 +1,7 @@
 import type { AgentRuntime } from '../agents/runtime'
 import type { ChatMessage } from './messages'
 import type { RunMode } from './surface'
+import type { ModelRouteRequest } from '../model-route'
 
 export interface EkkoBackgroundContinuationContext {
   version: 1
@@ -59,6 +60,7 @@ export interface SessionMessage {
 }
 
 export interface QueuedRun {
+  modelRoute?: ModelRouteRequest
   /** Internal admission check, never serialized or supplied by the client. */
   authorize?: () => Promise<void>
   /** Captured at admission, independent of whichever socket drains the queue. */

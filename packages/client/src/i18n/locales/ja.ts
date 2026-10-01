@@ -1,6 +1,8 @@
 import { socialMessagesJa } from '../social-messages-locales'
 
 export default {
+  modelRouteCatalog: { failed: 'Magpie モデルを読み込めません。再試行してください。', empty: 'このルートで利用可能なモデルはありません。' },
+  modelRoute: { caller: 'Magpie 呼び出し元（任意）', route: 'モデルルート', model: '明示的なゲートウェイモデル' },
   jev: {
     browserAutomation: "内蔵ブラウザーの自動化",
     browserAutomationHint: "このプロファイルに保存した JEV 接続を使用し、次の判定から適用します。画面上のラベルを JEV に送信しますが、入力値は含みません。無効時、利用不可時、判定が不確かな場合は従来の処理を維持します。",

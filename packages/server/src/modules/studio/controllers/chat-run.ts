@@ -5,6 +5,18 @@ import { io, type Socket } from 'socket.io-client'
 import { config } from '../public/config'
 import { getChatRunServer } from '../public/chat-run'
 import { resolveModelExecutionIdentity } from '../contracts/runs/model-execution-identity'
+import { snapshotModelRoute } from '../contracts/model-route'
+import { getSession } from '../public/sessions'
+import { fetchMagpieModelIds } from '../services/chat-run/model-config'
+
+export async function modelRouteModels(ctx: Context): Promise<void> {
+  try {
+    ctx.body = { models: await fetchMagpieModelIds() }
+  } catch {
+    ctx.status = 503
+    ctx.body = { error: 'Magpie model catalog unavailable' }
+  }
+}
 
 type ChatRunPayload = Record<string, unknown> & {
   input?: unknown
@@ -224,15 +236,24 @@ export async function runOnce(ctx: Context) {
   const isCodingAgentRun = body.source === 'coding_agent' || body.coding_agent_id != null || body.agent_id != null
   if (isCodingAgentRun) {
     try {
-      const identity = await resolveModelExecutionIdentity({
-        profile,
-        provider: body.provider,
-        model: body.model,
-        apiMode: body.apiMode ?? body.api_mode,
-      })
-      payload.provider = identity.provider
-      payload.model = identity.model
-      payload.apiMode = identity.apiMode
+      const nativeOpenCode = body.coding_agent_id === 'opencode' || body.agent_id === 'opencode'
+      const route = nativeOpenCode || body.coding_agent_id === 'ekko-agent' || body.agent_id === 'ekko-agent'
+        ? snapshotModelRoute(body.modelRoute === undefined && typeof body.session_id === 'string'
+            ? getSession(body.session_id)?.modelRoute : body.modelRoute)
+        : undefined
+      if (route) {
+        payload.modelRoute = route
+      } else if (!nativeOpenCode) {
+        const identity = await resolveModelExecutionIdentity({
+          profile,
+          provider: body.provider,
+          model: body.model,
+          apiMode: body.apiMode ?? body.api_mode,
+        })
+        payload.provider = identity.provider
+        payload.model = identity.model
+        payload.apiMode = identity.apiMode
+      }
       delete payload.api_mode
       delete payload.apiKey
       delete payload.api_key

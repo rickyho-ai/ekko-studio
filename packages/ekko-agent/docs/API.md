@@ -2,6 +2,10 @@
 
 本文档对应 `ekko-agent` 的公共 TypeScript API。推荐入口是 `new EkkoAgent()`：它是安装级容器，每个 Profile 会创建一个独立的 `EkkoProfileAgent`，Profile 的模块由该实例统一提供。
 
+## Magpie 路由边界
+
+`ModelAccessRequest` 和 `ModelBinding` 仅包含 `sessionId`、`agentId: 'opencode' | 'hermes'`、`routeId: 'codex' | 'claude'` 和可选的 `modelId`。该边界将 Ekko 已选定的意图交给未来的 Magpie Gateway；不负责账户选择、凭证、认证、Provider 回退或 Provider 端点，也尚未实现网络调用。`enforceModelAccessBoundary` 拒绝替换会话、Agent、路由，以及替换或丢弃显式指定的模型；未指定模型时允许 Gateway 返回路由默认模型。
+
 ## 安装与最小示例
 
 ```bash
@@ -1353,6 +1357,8 @@ export * from './model/authorized-providers'
 
 export * from './model/authorization'
 
+export * from './model/access'
+
 export * from './model/authorized-client'
 
 export * from './model/manager'
@@ -2185,6 +2191,30 @@ export interface MemoryStore {
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
   close(): void
 }
+```
+### `src/model/access.ts`
+
+```ts
+export interface ModelAccessRequest {
+  readonly sessionId: string
+  readonly agentId: 'opencode' | 'hermes'
+  readonly routeId: 'codex' | 'claude'
+  readonly modelId?: string
+}
+
+export interface ModelBinding extends ModelAccessRequest {
+
+}
+
+export interface ModelAccessAdapter {
+  bind(request: ModelAccessRequest): Promise<ModelBinding>
+}
+
+export function createPassthroughModelAccessAdapter(): ModelAccessAdapter
+
+export function assertModelBindingPreservesRequest( request: ModelAccessRequest, binding: ModelBinding, ): ModelBinding
+
+export function enforceModelAccessBoundary(adapter: ModelAccessAdapter): ModelAccessAdapter
 ```
 ### `src/model/authorization.ts`
 

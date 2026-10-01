@@ -52,6 +52,7 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression'
   return {
     ...actual,
     buildCompressedHistory: buildCompressedHistoryMock,
+    buildDbSnapshotAwareHistory: vi.fn(async () => []),
   }
 })
 
@@ -254,6 +255,121 @@ describe('ekko-agent context usage events', () => {
     const rows = addMessagesMock.mock.calls.flatMap(call => call[0])
     expect(rows).toContainEqual(expect.objectContaining({ role: 'tool', tool_name: 'update_plan', content: JSON.stringify(plan) }))
     expect(rows).toContainEqual(expect.objectContaining({ role: 'assistant', tool_calls: [expect.objectContaining({ function: expect.objectContaining({ name: 'update_plan' }) })] }))
+  })
+
+  it.each([
+    ['opencode', 'codex', '/v1/responses'],
+    ['hermes', 'claude', '/v1/messages'],
+    ['hermes', 'codex', '/v1/responses'],
+    ['opencode', 'claude', '/v1/messages'],
+  ] as const)('dispatches explicit %s/%s intent without provider resolution or fallback', async (agentId, routeId, endpoint) => {
+    const fetchMock = vi.fn(async (url: any, init: any) => {
+      expect(String(url)).toBe(`http://127.0.0.1:3425${endpoint}`)
+      const headers = new Headers(init.headers)
+      expect(headers.get('authorization')).toBe(`Bearer magpie-${agentId}`)
+      expect(headers.get('X-Magpie-Session')).toBe('session-1')
+      expect(JSON.parse(init.body).model).toBe('exact/model')
+      return new Response('{}', { status: 422 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      agentRunMock.mockImplementationOnce(async (input: any) => {
+        await expect(input.modelClient.create({ messages: [{ role: 'user', content: 'hello' }] })).rejects.toThrow()
+        await expect((async () => {
+          for await (const _event of input.modelClient.stream({ messages: [{ role: 'user', content: 'hello' }] })) {}
+        })()).rejects.toThrow()
+        return { runId: 'magpie-run', output: { role: 'assistant', content: 'done' }, steps: [], messages: [], events: [] }
+      })
+      const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+      const { nsp, socket, sessionMap } = makeHarness()
+      await handleEkkoAgentRun(nsp as any, socket as any, {
+        session_id: 'session-1', coding_agent_id: 'ekko-agent', input: 'hello',
+        model: 'must-not-substitute', modelRoute: { agentId, routeId, modelId: 'exact/model' },
+      }, 'default', sessionMap, vi.fn(() => false))
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(resolveBridgeRunModelConfigMock).not.toHaveBeenCalled()
+      expect(resolveEkkoProviderRuntimeConfigMock).not.toHaveBeenCalled()
+      expect(resolveModelProviderConfigsMock).not.toHaveBeenCalled()
+      expect(buildCompressedHistoryMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it.each([undefined, '', '   '])('fails closed for missing/blank Magpie model %s', async modelId => {
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, state } = makeHarness()
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', coding_agent_id: 'ekko-agent', input: 'hello',
+      modelRoute: { agentId: 'opencode', routeId: 'codex', ...(modelId === undefined ? {} : { modelId }) },
+    }, 'default', sessionMap, vi.fn(() => false))
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({ error: 'Magpie modelRoute.modelId is required' }))
+    expect(agentRunMock).not.toHaveBeenCalled()
+    expect(resolveBridgeRunModelConfigMock).not.toHaveBeenCalled()
+    expect(state.isWorking).toBe(false)
+  })
+
+  it.each([
+    { routeId: 'codex', modelId: 'exact' },
+    { agentId: 'hermes', modelId: 'exact' },
+  ])('fails closed for incomplete Magpie intent: %j', async modelRoute => {
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap } = makeHarness()
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', coding_agent_id: 'ekko-agent', input: 'hello', modelRoute: modelRoute as any,
+    }, 'default', sessionMap, vi.fn(() => false))
+    expect(socket.emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({ error: expect.stringContaining('Invalid modelRoute.') }))
+    expect(agentRunMock).not.toHaveBeenCalled()
+    expect(resolveModelProviderConfigsMock).not.toHaveBeenCalled()
+  })
+
+  it('restores persisted intent and snapshots it into background continuations', async () => {
+    const intent = { agentId: 'hermes' as const, routeId: 'codex' as const, modelId: 'origin-model' }
+    getSessionMock.mockReturnValue({ id: 'session-1', modelRoute: intent, workspace: '/tmp/workspace' })
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      intent.modelId = 'later-model'
+      input.onEvent({ type: 'subagent.complete', runId: 'parent', subagentId: 'child-background',
+        background: true, status: 'completed', summary: 'done', output: 'done', outputTail: 'done',
+        continuationContext: continuationContext(), inputTokens: 0, outputTokens: 0, apiCalls: 0,
+      })
+      return { runId: 'parent', output: { role: 'assistant', content: 'done' }, steps: [], messages: [], events: [] }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, state } = makeHarness()
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', coding_agent_id: 'ekko-agent', input: 'hello',
+    }, 'default', sessionMap, vi.fn(() => false))
+    expect(agentRunMock.mock.calls[0][0].model).toBe('origin-model')
+    expect((state.queue as any[])[0].modelRoute).toEqual({ agentId: 'hermes', routeId: 'codex', modelId: 'origin-model' })
+    expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({ modelRoute: { agentId: 'hermes', routeId: 'codex', modelId: 'origin-model' } }))
+  })
+
+  it('keeps a captured non-Magpie queue item non-Magpie even after session selection changes', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', model: 'ekko-test-model', provider: 'test-provider',
+      modelRoute: { agentId: 'hermes', routeId: 'claude', modelId: 'later-selection' }, workspace: '/tmp/workspace' })
+    agentRunMock.mockResolvedValueOnce({ runId: 'ordinary-run', output: { role: 'assistant', content: 'done' }, steps: [], messages: [], events: [] })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap } = makeHarness()
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', coding_agent_id: 'ekko-agent', input: 'hello', modelRoute: undefined,
+    }, 'default', sessionMap, vi.fn(() => false), false, undefined, false)
+    expect(resolveBridgeRunModelConfigMock).toHaveBeenCalledTimes(1)
+    expect(resolveEkkoProviderRuntimeConfigMock).toHaveBeenCalledTimes(1)
+    expect(resolveModelProviderConfigsMock).toHaveBeenCalledTimes(1)
+    expect(agentRunMock.mock.calls[0][0].modelClient.provider).toBe('test')
+    expect(updateSessionMock.mock.calls.some(call => Object.hasOwn(call[1], 'modelRoute'))).toBe(false)
+  })
+
+  it('does not replace persisted selection when dispatching a queued Magpie snapshot', async () => {
+    agentRunMock.mockResolvedValueOnce({ runId: 'queued-run', output: { role: 'assistant', content: 'done' }, steps: [], messages: [], events: [] })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap } = makeHarness()
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', coding_agent_id: 'ekko-agent', input: 'hello',
+      modelRoute: { agentId: 'opencode', routeId: 'claude', modelId: 'captured-model' },
+    }, 'default', sessionMap, vi.fn(() => false), false, undefined, false)
+    expect(agentRunMock.mock.calls[0][0].model).toBe('captured-model')
+    expect(updateSessionMock.mock.calls.some(call => Object.hasOwn(call[1], 'modelRoute'))).toBe(false)
   })
 
   it('bridges Ekko tool approval requests through the existing chat events', async () => {

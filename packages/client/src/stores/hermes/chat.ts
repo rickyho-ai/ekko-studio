@@ -452,6 +452,7 @@ export interface QueueInsertionState {
 }
 
 export interface Session {
+  modelRoute?: import('@/api/studio/model-route').ModelRouteRequest
   id: string
   profile?: string
   title: string
@@ -1188,6 +1189,7 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     apiMode: s.api_mode,
+    modelRoute: s.modelRoute ? { ...s.modelRoute } : undefined,
     agentPreset: s.agent_preset || undefined,
     reasoningEffort: s.reasoning_effort || undefined,
     messageCount: s.message_count,
@@ -1963,6 +1965,7 @@ export const useChatStore = defineStore('chat', () => {
 
 
   function createSession(options: {
+    modelRoute?: Session['modelRoute']
     profile?: string
     model?: string
     provider?: string
@@ -2000,6 +2003,7 @@ export const useChatStore = defineStore('chat', () => {
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       apiMode: options.apiMode,
+      modelRoute: options.modelRoute ? { ...options.modelRoute } : undefined,
     }
     sessions.value.unshift(session)
     return session
@@ -2275,6 +2279,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function newChat(options: {
+    modelRoute?: Session['modelRoute']
     profile?: string
     model?: string
     provider?: string
@@ -2294,6 +2299,7 @@ export const useChatStore = defineStore('chat', () => {
     const codingAgentId = options.codingAgentId || agentToCodingAgentId(options.agent)
     const isGlobalCodingAgent = Boolean(codingAgentId) && options.codingAgentMode === 'global'
     const session = createSession({
+      modelRoute: options.modelRoute,
       profile: options.profile,
       model: isGlobalCodingAgent ? undefined : options.model || appStore.selectedModel || undefined,
       provider: isGlobalCodingAgent ? '' : options.provider || appStore.selectedProvider || '',
@@ -2348,6 +2354,23 @@ export const useChatStore = defineStore('chat', () => {
       activeTarget.reasoningEffort = undefined
       if (shouldClearRuntimeCredentials) clearCodingAgentRuntimeCredentials(activeTarget)
     }
+    return true
+  }
+
+  async function switchSessionModelRoute(sessionId: string, modelRoute: NonNullable<Session['modelRoute']>): Promise<boolean> {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return false
+    const captured = { ...modelRoute }
+    if (!session.isLocalOnly) {
+      try {
+        const { setSessionModelRoute } = await import('@/api/studio/sessions')
+        await setSessionModelRoute(sessionId, captured)
+      } catch {
+        return false
+      }
+    }
+    session.modelRoute = captured
+    if (activeSession.value?.id === sessionId) activeSession.value.modelRoute = { ...captured }
     return true
   }
 
@@ -3501,6 +3524,7 @@ export const useChatStore = defineStore('chat', () => {
     const targets = [sessions.value.find(s => s.id === sid), activeSession.value?.id === sid ? activeSession.value : null]
       .filter((session): session is Session => Boolean(session))
     for (const target of new Set(targets)) {
+      if (evt.modelRoute) target.modelRoute = { ...evt.modelRoute }
       if (typeof evt.model === 'string') target.model = evt.model
       if (typeof evt.provider === 'string') target.provider = evt.provider
       if (typeof evt.api_mode === 'string') target.apiMode = evt.api_mode as ProviderApiMode || undefined
@@ -3524,6 +3548,7 @@ export const useChatStore = defineStore('chat', () => {
     applySessionSettingsUpdate({
       event: 'session.settings.updated',
       session_id: data.session_id,
+      ...(data.modelRoute ? { modelRoute: { ...data.modelRoute } } : {}),
       ...(typeof data.model === 'string' ? { model: data.model } : {}),
       ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
       ...(typeof data.api_mode === 'string' ? { api_mode: data.api_mode || undefined } : {}),
@@ -3617,6 +3642,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // Capture session ID at send time — all callbacks use this, not activeSessionId
     const sid = activeSessionId.value!
+    const submittedModelRoute = activeSession.value?.modelRoute ? { ...activeSession.value.modelRoute } : undefined
     const shouldSendInitialSessionConfig = activeSession.value
       ? activeSession.value.messageCount == null || activeSession.value.messageCount === 0
       : false
@@ -3754,6 +3780,7 @@ export const useChatStore = defineStore('chat', () => {
           )
         : undefined
       const runPayload: StartRunRequest = {
+        modelRoute: submittedModelRoute,
         input,
         ...(displayInput ? { display_input: displayInput } : {}),
         session_id: sid,
@@ -5562,6 +5589,7 @@ export const useChatStore = defineStore('chat', () => {
     ensureSessionLoaded,
     loadOlderMessages,
     switchSessionModel,
+    switchSessionModelRoute,
     addOrUpdateSession,
     clearProviderFromSessions,
     deleteSession,

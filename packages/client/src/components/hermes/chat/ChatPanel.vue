@@ -63,6 +63,7 @@ import PageSidebarFooter from "@/components/layout/PageSidebarFooter.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { useCollapsedProviderGroups } from "@/composables/useCollapsedProviderGroups";
+import { useModelRouteCatalog } from "@/composables/useModelRouteCatalog";
 import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth, isKeylessModelProvider, openCodeFreeApiMode } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
@@ -853,6 +854,9 @@ const newChatModelKind = ref<"model" | "moa">("model");
 const newChatBaseUrl = ref<string>("");
 const newChatApiKey = ref<string>("");
 const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
+const newChatModelRouteAgent = ref<'opencode' | 'hermes'>();
+const newChatModelRouteFamily = ref<'codex' | 'claude'>();
+const newChatModelRouteModel = ref<string | null>('');
 const newChatWorkspace = ref("");
 const newChatAgentPreset = ref<string>();
 const newChatPresetReady = ref(false);
@@ -1019,7 +1023,7 @@ function effectiveNewChatMode(
   agent: typeof newChatAgent.value,
   requestedMode: typeof newChatAgentMode.value,
 ) {
-  if (agent === "ekko-agent") return "scoped";
+  if (agent === "ekko-agent" || agent === "opencode") return "scoped";
   if (agent === "cursor") return "global";
   return requestedMode;
 }
@@ -1120,22 +1124,30 @@ const selectedNewChatProviderGroup = computed(() =>
 );
 
 const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
-const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi" || newChatAgent.value === "grok" || newChatAgent.value === "cursor" || (newChatAgent.value === "opencode" || newChatAgent.value === "dsh"));
+const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi" || newChatAgent.value === "grok" || newChatAgent.value === "cursor" || newChatAgent.value === "dsh");
 const effectiveNewChatAgentMode = computed(() =>
   effectiveNewChatMode(newChatAgent.value, newChatAgentMode.value),
 );
 const isNewChatGlobalCodingAgent = computed(() =>
   isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "global",
 );
-const newChatUsesProviderModel = computed(() => !isNewChatGlobalCodingAgent.value);
+const newChatUsesModelRoute = computed(() => newChatAgent.value === 'opencode' || (newChatAgent.value === 'ekko-agent' && Boolean(newChatModelRouteAgent.value)));
+const modelRouteCatalog = useModelRouteCatalog(
+  computed(() => showNewChatModal.value && newChatUsesModelRoute.value),
+  newChatModelRouteFamily,
+  newChatModelRouteModel,
+);
+const { options: modelRouteOptions, loading: modelRouteLoading, failed: modelRouteFailed } = modelRouteCatalog;
+const newChatUsesProviderModel = computed(() => !isNewChatGlobalCodingAgent.value && !newChatUsesModelRoute.value);
 const newChatNeedsBaseUrl = computed(() =>
-  isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
+  !newChatUsesModelRoute.value && isNewChatCodingAgent.value && effectiveNewChatAgentMode.value === "scoped" && !selectedNewChatProviderGroup.value?.base_url,
 );
 const newChatUsesServerAuth = computed(() =>
   usesServerManagedProviderAuth(newChatAgent.value as ChatCodingAgentId, selectedNewChatProviderGroup.value?.provider),
 );
 const newChatUsesKeylessProvider = computed(() => isKeylessModelProvider(newChatProvider.value));
 const newChatNeedsApiKey = computed(() =>
+  !newChatUsesModelRoute.value &&
   isNewChatCodingAgent.value &&
   effectiveNewChatAgentMode.value === "scoped" &&
   !newChatUsesServerAuth.value &&
@@ -1146,6 +1158,9 @@ const canConfirmNewChat = computed(() => {
   if (newChatCategoryCreating.value || newChatLoading.value) return false;
   if (newChatAgent.value === "dsh" && (!newChatAgentPreset.value || !newChatPresetReady.value)) return false;
   if (!newChatProfile.value) return false;
+  if (newChatUsesModelRoute.value) {
+    return Boolean(newChatModelRouteAgent.value && newChatModelRouteFamily.value && modelRouteCatalog.selectionValid.value);
+  }
   if (!newChatUsesProviderModel.value) return true;
   if (!newChatProvider.value || !newChatModel.value) return false;
   if (!isNewChatCodingAgent.value) return true;
@@ -1372,6 +1387,10 @@ async function confirmNewChat() {
         ? "ekko-agent"
       : "hermes";
   const session = chatStore.newChat({
+    modelRoute: (newChatAgent.value === 'ekko-agent' || newChatAgent.value === 'opencode') && newChatModelRouteAgent.value && newChatModelRouteFamily.value
+      ? { agentId: newChatModelRouteAgent.value, routeId: newChatModelRouteFamily.value,
+          ...(newChatModelRouteModel.value ? { modelId: newChatModelRouteModel.value } : {}) }
+      : undefined,
     profile: newChatProfile.value,
     provider: isGlobalCodingAgent ? undefined : newChatProvider.value,
     model: isGlobalCodingAgent ? undefined : newChatModel.value,
@@ -3021,6 +3040,27 @@ async function handleSessionModelCustomSubmit() {
               <NRadioButton value="moa">{{ t('chat.moaPresets') }}</NRadioButton>
             </NRadioGroup>
           </label>
+          <template v-if="newChatAgent === 'ekko-agent' || newChatAgent === 'opencode'">
+            <label class="new-chat-field">
+              <span class="new-chat-label">{{ t('modelRoute.caller') }}</span>
+              <NSelect v-model:value="newChatModelRouteAgent" clearable
+                :options="[{ label: 'OpenCode', value: 'opencode' }, { label: 'Hermes', value: 'hermes' }]" />
+            </label>
+            <label v-if="newChatModelRouteAgent" class="new-chat-field">
+              <span class="new-chat-label">{{ t('modelRoute.route') }}</span>
+              <NSelect v-model:value="newChatModelRouteFamily"
+                :options="[{ label: 'Codex', value: 'codex' }, { label: 'Claude', value: 'claude' }]" />
+            </label>
+            <label v-if="newChatModelRouteAgent" class="new-chat-field">
+              <span class="new-chat-label">{{ t('modelRoute.model') }}</span>
+              <NSelect v-model:value="newChatModelRouteModel" :options="modelRouteOptions"
+                :loading="modelRouteLoading" :disabled="modelRouteLoading || modelRouteFailed || !newChatModelRouteFamily"
+                filterable clearable />
+              <span v-if="modelRouteFailed" role="alert" class="new-chat-field-hint">{{ t('modelRouteCatalog.failed') }}</span>
+              <span v-else-if="newChatModelRouteFamily && !modelRouteLoading && !modelRouteOptions.length" class="new-chat-field-hint">{{ t('modelRouteCatalog.empty') }}</span>
+              <NButton v-if="modelRouteFailed" size="small" @click="modelRouteCatalog.load">{{ t('common.retry') }}</NButton>
+            </label>
+          </template>
           <label v-if="newChatUsesProviderModel && newChatModelKind === 'model'" class="new-chat-field">
             <span class="new-chat-label">{{ t("models.provider") }}</span>
             <NSelect
@@ -3041,7 +3081,7 @@ async function handleSessionModelCustomSubmit() {
               filterable
             />
           </label>
-          <label v-if="isNewChatCodingAgent && effectiveNewChatAgentMode === 'scoped'" class="new-chat-field">
+          <label v-if="isNewChatCodingAgent && effectiveNewChatAgentMode === 'scoped' && !newChatUsesModelRoute" class="new-chat-field">
             <span class="new-chat-label">{{ t("codingAgents.protocolScope") }}</span>
             <NSelect
               v-model:value="newChatApiMode"

@@ -1,8 +1,10 @@
 import { request, getApiKey, getBaseUrlValue } from '../client'
 import type { ProviderApiMode } from './provider-api-mode'
+import type { ModelRouteRequest } from './model-route'
 import { fetchAuthenticatedBlob, saveBlob } from './binary-content'
 
 export interface SessionSummary {
+  modelRoute?: ModelRouteRequest
   id: string
   profile?: string | null
   source: string
@@ -600,6 +602,13 @@ export async function setSessionReasoningEffort(id: string, reasoningEffort: str
   } catch {
     return false
   }
+}
+
+export async function setSessionModelRoute(id: string, modelRoute: ModelRouteRequest): Promise<void> {
+  await request(`/api/studio/sessions/${encodeURIComponent(id)}/model`, {
+    method: 'POST',
+    body: JSON.stringify({ modelRoute }),
+  })
 }
 
 export async function exportSession(id: string, mode: 'full' | 'compressed' = 'full', ext: 'json' | 'txt' = 'json'): Promise<void> {

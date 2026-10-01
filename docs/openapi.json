@@ -13075,6 +13075,32 @@
         "x-session-share-permission": "upload"
       }
     },
+    "/api/studio/chat-run/model-route/models": {
+      "get": {
+        "tags": [
+          "Chat Run"
+        ],
+        "summary": "Get models",
+        "description": "GET /api/studio/chat-run/model-route/models",
+        "operationId": "modelRouteModels",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/studio/chat-run/runs": {
       "post": {
         "tags": [
@@ -20247,6 +20273,10 @@
                   "model": {
                     "type": "string"
                   },
+                  "modelRoute": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "provider": {
                     "type": "string"
                   }
@@ -20259,6 +20289,99 @@
           }
         },
         "x-session-share-permission": "switchModel"
+      }
+    },
+    "/api/studio/sessions/{id}/native-opencode": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get native-opencode",
+        "description": "GET /api/studio/sessions/:id/native-opencode",
+        "operationId": "nativeOpenCodeState",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/studio/sessions/{id}/native-opencode/continue": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create continue",
+        "description": "POST /api/studio/sessions/:id/native-opencode/continue",
+        "operationId": "continueNativeOpenCode",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "string"
+                  },
+                  "trim": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "input"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/api/studio/sessions/{id}/pin": {

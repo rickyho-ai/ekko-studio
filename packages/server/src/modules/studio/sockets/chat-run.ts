@@ -48,7 +48,10 @@ import {
 } from '../public/chat-agent-runtime'
 import { handleBridgeRun, resumeBridgeRun } from '../services/chat-run/handle-bridge-run'
 import { handleCodingAgentRun } from '../services/chat-run/handle-coding-agent-run'
+import { handleNativeOpenCodeRun } from '../services/chat-run/handle-native-opencode-run'
+import { readNativeOpenCodeState } from '../services/chat-run/native-opencode'
 import { handleEkkoAgentRun, type EkkoAgentRunSocketData } from '../services/chat-run/handle-ekko-agent-run'
+import { snapshotModelRoute, type ModelRouteRequest } from '../contracts/model-route'
 import { handleAbort } from '../services/chat-run/abort'
 import { getOrCreateSession } from '../services/chat-run/compression'
 import { loadSessionStateFromDb, resolveRunSource } from '../services/chat-run/load-state'
@@ -497,6 +500,7 @@ export class ChatRunSocket {
   }
 
   emitSessionSettingsUpdated(sessionId: string, settings: {
+    modelRoute?: ModelRouteRequest
     model?: string
     provider?: string
     api_mode?: string
@@ -853,6 +857,7 @@ export class ChatRunSocket {
     }
 
     socket.on('run', async (data: {
+      modelRoute?: ModelRouteRequest
       push_snapshot?: unknown
       input: string | ContentBlock[]
       display_input?: string | ContentBlock[] | null
@@ -903,6 +908,8 @@ export class ChatRunSocket {
       let runProfile: string
       try {
         runProfile = resolveRunProfile(data.session_id, data.profile)
+        data.modelRoute = snapshotModelRoute(data.modelRoute === undefined && data.session_id
+          ? getSession(data.session_id)?.modelRoute : data.modelRoute)
         if (!shared && data.session_id && Array.isArray(data.input)) {
           // New chats carry a client-generated id; the runtime persists them on the first run.
           if (getSession(data.session_id)) requireSocketSessionAccess(data.session_id)
@@ -979,6 +986,7 @@ export class ChatRunSocket {
         if (state.isWorking) {
           const queueId = data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
           state.queue.push({
+            modelRoute: snapshotModelRoute(data.modelRoute),
             queue_id: queueId,
             input: data.input,
             displayInput: data.display_input,
@@ -1478,6 +1486,7 @@ export class ChatRunSocket {
   private async handleRun(
     socket: Socket,
     data: {
+      modelRoute?: ModelRouteRequest
       input: string | ContentBlock[]
       display_input?: string | ContentBlock[] | null
       display_role?: 'user' | 'command'
@@ -1531,7 +1540,25 @@ export class ChatRunSocket {
     skipUserMessage = false,
     backgroundContinuationContext?: BackgroundContinuationContext,
     pushTargetId?: string,
+    modelRouteSnapshot = false,
   ) {
+    if (codingAgentId(data) === 'opencode') {
+      await handleNativeOpenCodeRun(this.nsp, socket, data, profile, this.sessionMap)
+      if (data.session_id) this.dequeueNextQueuedRun(socket, data.session_id, profile)
+      return
+    }
+    if (data.modelRoute !== undefined && !isEkkoAgentExecution(data)) {
+      const payload = { event: 'run.failed', session_id: data.session_id, queue_id: data.queue_id,
+        error: 'modelRoute requires the Ekko runtime; agentId identifies the Magpie caller, not the runtime' }
+      socket.emit('run.failed', payload)
+      data.onEvent?.('run.failed', payload)
+      if (data.session_id) {
+        const state = this.sessionMap.get(data.session_id)
+        if (state) state.isWorking = false
+        this.dequeueNextQueuedRun(socket, data.session_id, profile)
+      }
+      return
+    }
     const source = resolveRunSource(data.source, data.session_id)
     const surface = data.session_source || source
     if (data.session_id) getOrCreateSession(this.sessionMap, data.session_id).pushTargetId = pushTargetId
@@ -1711,6 +1738,7 @@ export class ChatRunSocket {
         this.dequeueNextQueuedRun.bind(this),
         skipUserMessage,
         backgroundContinuationContext,
+        !modelRouteSnapshot,
       )
       return
     }
@@ -2032,6 +2060,25 @@ export class ChatRunSocket {
     options?: { event: 'app.resumed'; cachedId: string },
   ) {
     let state = this.sessionMap.get(sid)
+    const nativeMapping = getSession(sid)
+    if (nativeMapping?.agent === 'opencode' && nativeMapping.agent_native_session_id) {
+      const native = await readNativeOpenCodeState(sid)
+      state = getOrCreateSession(this.sessionMap, sid)
+      state.profile = nativeMapping.profile
+      state.source = 'coding_agent'
+      state.isWorking = native.isWorking
+      socket.emit(options?.event || 'resumed', {
+        session_id: sid, workspace: native.workspace, modelRoute: nativeMapping.modelRoute,
+        isWorking: native.isWorking, events: [], queueLength: state.queue.length,
+        messages: native.output ? [{ id: native.messageId, role: 'assistant', content: native.output }] : [],
+        opencode_session_id: native.opencodeSessionId,
+      })
+      if (native.isWorking && !state.runId) {
+        void handleNativeOpenCodeRun(this.nsp, socket, { session_id: sid, input: '', observeOnly: true }, nativeMapping.profile, this.sessionMap)
+          .then(() => this.dequeueNextQueuedRun(socket, sid, nativeMapping.profile))
+      }
+      return
+    }
     if (!state) {
       state = await loadSessionStateFromDb(sid, this.sessionMap)
       this.sessionMap.set(sid, state)
@@ -2072,6 +2119,7 @@ export class ChatRunSocket {
       provider: sessionDetail?.provider || '',
       api_mode: sessionDetail?.api_mode || '',
       reasoning_effort: sessionDetail?.reasoning_effort || '',
+      modelRoute: snapshotModelRoute(sessionDetail?.modelRoute),
       push_enabled: Number(sessionDetail?.push_enabled || 0) !== 0,
       isWorking: state.isWorking,
       runStartedAt: state.runStartedAt,
@@ -2428,6 +2476,7 @@ export class ChatRunSocket {
       ? backgroundContinuationContext.profile
       : next.profile || fallbackProfile
     void this.handleRun(socket, {
+      modelRoute: snapshotModelRoute(next.modelRoute),
       input: next.input,
       display_input: next.displayInput,
       display_role: next.displayRole,
@@ -2464,13 +2513,14 @@ export class ChatRunSocket {
       background_delegation_id: next.backgroundDelegationId,
       background_claim_id: next.backgroundClaimId,
       autonomous: next.autonomous,
-    }, runProfile, skipUserMessage, backgroundContinuationContext, next.pushTargetId)
+    }, runProfile, skipUserMessage, backgroundContinuationContext, next.pushTargetId, true)
   }
 
   // --- Helpers ---
 
   async runAndWait(
     data: {
+      modelRoute?: ModelRouteRequest
       input: string | ContentBlock[]
       display_input?: string | ContentBlock[] | null
       display_role?: 'user' | 'command'
@@ -2526,6 +2576,7 @@ export class ChatRunSocket {
   ): Promise<ChatRunAndWaitResult> {
     const sessionId = String(data.session_id || '').trim()
     if (!sessionId) throw new Error('session_id is required')
+    data = { ...data, modelRoute: snapshotModelRoute(data.modelRoute === undefined ? getSession(sessionId)?.modelRoute : data.modelRoute) }
     const profile = options.profile || data.profile || getSession(sessionId)?.profile || getActiveProfileName() || 'default'
     const source = resolveRunSource(data.source, sessionId)
     const pushTargetId = options.pushRoot ? getRunPushTarget(options.pushRoot)?.id : undefined

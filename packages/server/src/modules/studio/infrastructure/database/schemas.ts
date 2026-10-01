@@ -118,6 +118,7 @@ export const SESSIONS_SCHEMA: Record<string, string> = {
   model: 'TEXT NOT NULL DEFAULT \'\'',
   provider: 'TEXT NOT NULL DEFAULT \'\'',
   api_mode: 'TEXT NOT NULL DEFAULT \'\'',
+  model_route: 'TEXT',
   reasoning_effort: 'TEXT NOT NULL DEFAULT \'\'',
   title: 'TEXT',
   parent_session_id: 'TEXT',

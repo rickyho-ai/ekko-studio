@@ -15,6 +15,7 @@ const sessionsApi = vi.hoisted(() => ({
   setSessionModel: vi.fn(),
   setSessionPushEnabled: vi.fn(),
   setSessionReasoningEffort: vi.fn(),
+  setSessionModelRoute: vi.fn(),
 }))
 
 vi.mock('@/api/studio/chat', () => ({
@@ -47,6 +48,7 @@ vi.mock('@/api/studio/sessions', () => ({
   setSessionModel: sessionsApi.setSessionModel,
   setSessionPushEnabled: sessionsApi.setSessionPushEnabled,
   setSessionReasoningEffort: sessionsApi.setSessionReasoningEffort,
+  setSessionModelRoute: sessionsApi.setSessionModelRoute,
 }))
 
 vi.mock('@/api/studio/download', () => ({
@@ -91,6 +93,40 @@ describe('chat store per-session reasoning effort', () => {
 
     expect(store.sessions[0].reasoningEffort).toBe('low')
     expect(sessionsApi.setSessionReasoningEffort).toHaveBeenCalledWith('s1', 'low')
+  })
+
+  it('round-trips explicit session modelRoute into submission without deriving it from provider/runtime', async () => {
+    const store = useChatStore()
+    const intent = { agentId: 'hermes' as const, routeId: 'codex' as const, modelId: 'exact-model' }
+    const session = store.newChat({ agent: 'ekko-agent', codingAgentId: 'ekko-agent', source: 'coding_agent', modelRoute: intent, model: 'other-model', provider: 'original' })
+    intent.modelId = 'later'
+    store.activeSessionId = session.id
+    store.activeSession = session
+    await store.sendMessage('hello')
+    expect(chatApi.startRunViaSocket.mock.calls.at(-1)?.[0]).toMatchObject({ session_id: session.id, modelRoute: { agentId: 'hermes', routeId: 'codex', modelId: 'exact-model' } })
+  })
+
+  it.each([undefined, '', 'exact-model'])('restores modelRoute model presence from session summaries: %s', async modelId => {
+    const modelRoute = { agentId: 'opencode', routeId: 'claude', ...(modelId === undefined ? {} : { modelId }) }
+    sessionsApi.fetchSessions.mockResolvedValue([{ id: 'route-session', source: 'coding_agent', agent: 'ekko-agent', model: 'other-model', started_at: 1, modelRoute }])
+    const store = useChatStore()
+    await store.refreshSessionListOnly('default')
+    expect(store.sessions[0]?.modelRoute).toEqual(modelRoute)
+    expect(Object.hasOwn(store.sessions[0].modelRoute!, 'modelId')).toBe(modelId !== undefined)
+  })
+
+  it('persists semantic selection independently of model/provider configuration', async () => {
+    const store = useChatStore()
+    const session = makeSession('persisted-route')
+    session.model = 'ordinary-model'
+    session.provider = 'ordinary-provider'
+    store.sessions = [session]
+    const modelRoute = { agentId: 'hermes' as const, routeId: 'claude' as const }
+    expect(await store.switchSessionModelRoute(session.id, modelRoute)).toBe(true)
+    expect(sessionsApi.setSessionModelRoute).toHaveBeenCalledWith(session.id, modelRoute)
+    expect(session).toMatchObject({ model: 'ordinary-model', provider: 'ordinary-provider', modelRoute })
+    expect(session.modelRoute).not.toHaveProperty('modelId')
+    expect(sessionsApi.setSessionModel).not.toHaveBeenCalled()
   })
 
   it('persists the default value as an empty server setting', async () => {
@@ -335,6 +371,7 @@ describe('chat store per-session reasoning effort', () => {
     chatApi.resumeSession.mockImplementationOnce((_sessionId: string, onResumed: (data: any) => void) => {
       onResumed({
         session_id: 'resume-session',
+        modelRoute: { agentId: 'hermes', routeId: 'codex', modelId: 'resume-model' },
         messages: [],
         isWorking: false,
         events: [],
@@ -357,6 +394,7 @@ describe('chat store per-session reasoning effort', () => {
 
     expect(session).toEqual(expect.objectContaining({
       model: 'server-model',
+      modelRoute: { agentId: 'hermes', routeId: 'codex', modelId: 'resume-model' },
       provider: 'openai',
       apiMode: 'codex_responses',
       reasoningEffort: 'max',

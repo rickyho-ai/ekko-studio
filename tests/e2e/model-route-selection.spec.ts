@@ -1,0 +1,86 @@
+import { expect, test, type Page } from '@playwright/test'
+import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
+
+async function selectOption(page: Page, label: string) {
+  await page.locator('.n-base-select-option:visible').filter({ hasText: label }).click()
+  // Wait for the outgoing menu transition before opening a picker with overlapping labels.
+  await expect(page.locator('.n-base-select-option:visible')).toHaveCount(0)
+}
+
+for (const runtime of ['Ekko', 'OpenCode']) test(`${runtime} selects Magpie intent and submits an exact model`, async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+  await page.route('**/api/studio/chat-run/model-route/models', route => route.fulfill({ json: { models: ['claude/sonnet', 'codex/exact-gateway-model', 'other/model'] } }))
+  await page.goto('/#/hermes/chat')
+  await page.getByRole('button', { name: 'New Chat', exact: true }).click()
+  const drawer = page.locator('.new-chat-drawer')
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Agent/ }).first().locator('.n-base-selection').click()
+  await selectOption(page, runtime)
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Magpie caller/ }).locator('.n-base-selection').click()
+  await selectOption(page, 'Hermes')
+  await expect(drawer.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Model route/ }).locator('.n-base-selection').click()
+  await selectOption(page, 'Codex')
+  await expect(drawer.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Explicit gateway model/ }).locator('.n-base-selection').click()
+  await expect(page.locator('.n-base-select-option:visible')).toHaveText(['codex/exact-gateway-model'])
+  await selectOption(page, 'codex/exact-gateway-model')
+  await expect(drawer.getByRole('button', { name: 'Create', exact: true })).toBeEnabled()
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Model route/ }).locator('.n-base-selection').click()
+  await selectOption(page, 'Claude')
+  await expect(drawer.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+  const modelField = drawer.locator('.new-chat-field').filter({ hasText: /^Explicit gateway model/ })
+  await expect(modelField).not.toContainText('codex/exact-gateway-model')
+  await modelField.locator('.n-base-selection').click()
+  await expect(page.locator('.n-base-select-option:visible')).toHaveText(['claude/sonnet'])
+  await selectOption(page, 'claude/sonnet')
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Model route/ }).locator('.n-base-selection').click()
+  await selectOption(page, 'Codex')
+  await expect(drawer.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+  await modelField.locator('.n-base-selection').click()
+  await selectOption(page, 'codex/exact-gateway-model')
+  await expect(drawer.locator('.new-chat-field').filter({ hasText: /^Provider/ })).toHaveCount(0)
+  await drawer.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page).toHaveURL(/#\/hermes\/session\//)
+  await page.getByPlaceholder('Type a message... (Enter to send, Shift+Enter for new line)').fill('Use my selected route')
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).__PW_CHAT_SOCKET__?.emitted?.find((item: any) => item.event === 'run')?.payload)).toMatchObject({
+    coding_agent_id: runtime === 'Ekko' ? 'ekko-agent' : 'opencode',
+    session_id: expect.any(String),
+    modelRoute: { agentId: 'hermes', routeId: 'codex', modelId: 'codex/exact-gateway-model' },
+  })
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+for (const failure of [true, false]) test(`catalog ${failure ? 'failure' : 'empty route'} blocks Magpie creation without affecting other provider flows`, async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  let catalogRequests = 0
+  await page.route('**/api/studio/chat-run/model-route/models', route => {
+    catalogRequests++
+    return route.fulfill(failure
+      ? { status: 503, json: { error: 'Magpie model catalog unavailable' } }
+      : { json: { models: ['other/unrelated'] } })
+  })
+  await page.goto('/#/hermes/chat')
+  await page.getByRole('button', { name: 'New Chat', exact: true }).click()
+  const drawer = page.locator('.new-chat-drawer')
+  const agent = drawer.locator('.new-chat-field').filter({ hasText: /^Agent/ }).first()
+  await agent.locator('.n-base-selection').click()
+  await selectOption(page, 'Ekko')
+  await expect(drawer.locator('.new-chat-field').filter({ hasText: /^Provider/ })).toBeVisible()
+  expect(catalogRequests).toBe(0)
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Magpie caller/ }).locator('.n-base-selection').click()
+  await selectOption(page, 'OpenCode')
+  await drawer.locator('.new-chat-field').filter({ hasText: /^Model route/ }).locator('.n-base-selection').click()
+  await selectOption(page, 'Claude')
+  await expect(drawer.getByText(failure ? 'Unable to load Magpie models. Retry to continue.' : 'No models available for this route.', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+  await expect(drawer.locator('.new-chat-field').filter({ hasText: /^Provider/ })).toHaveCount(0)
+  await agent.locator('.n-base-selection').click()
+  await selectOption(page, 'Codex')
+  await expect(drawer.locator('.new-chat-field').filter({ hasText: /^Provider/ })).toBeVisible()
+  await expect(drawer.locator('.new-chat-field').filter({ hasText: /^Explicit gateway model/ })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})

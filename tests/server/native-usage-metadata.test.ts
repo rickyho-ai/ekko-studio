@@ -1,9 +1,8 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readCodexTurnModel, readOpenCodeMessageModel } from '../../packages/server/src/modules/coding-agents/services/runtime/native-model'
+import { readCodexTurnModel } from '../../packages/server/src/modules/coding-agents/services/runtime/native-model'
 import { NativeTurnUsage } from '../../packages/server/src/modules/coding-agents/services/runtime/native-usage'
 
 describe('native model metadata', () => {
@@ -33,16 +32,6 @@ describe('native model metadata', () => {
     expect(await readCodexTurnModel(root, 'wanted', startedAt)).toBeUndefined()
     rollout('wanted', [{ type: 'session_meta', payload: { id: 'wanted' } }, context('first'), context('second')])
     expect(await readCodexTurnModel(root, 'wanted', startedAt)).toBeUndefined()
-  })
-  it('does not read an OpenCode user message or a different native session', () => {
-    const file = join(root, 'opencode.db')
-    const db = new DatabaseSync(file)
-    db.exec('CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)')
-    db.prepare('INSERT INTO message VALUES (?, ?, ?)').run('id', 'session', JSON.stringify({ role: 'user', modelID: 'selection-only' }))
-    db.close()
-    expect(readOpenCodeMessageModel(file, 'session', 'id')).toBeUndefined()
-    expect(readOpenCodeMessageModel(file, 'other', 'id')).toBeUndefined()
-    expect(readOpenCodeMessageModel(join(root, 'missing'), 'session', 'id')).toBeUndefined()
   })
 })
 

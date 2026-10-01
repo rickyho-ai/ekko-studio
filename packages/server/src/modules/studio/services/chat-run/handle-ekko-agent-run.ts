@@ -45,7 +45,7 @@ import { logger } from '../../public/logging'
 import { recordSessionUsage } from '../usage/usage-recorder'
 import { observeRunChatPetEvent } from '../../public/pet-events'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
-import { buildCompressedHistory, getOrCreateSession } from './compression'
+import { buildCompressedHistory, buildDbSnapshotAwareHistory, getOrCreateSession } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { persistRunMessages, type RunMessageDraft } from './message-persistence'
 import { buildOutboundRunEvent } from './resume-payload'
@@ -53,8 +53,11 @@ import { estimateUsageTokensFromMessages } from './usage'
 import type { BackgroundContinuationContext, ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 import { selectWorkspace } from '../workspace/manager'
+import { snapshotModelRoute, type ModelRouteRequest } from '../../contracts/model-route'
+import { createMagpieGatewayAdapter } from '../../../../../../ekko-agent/src/model/access'
 
 export interface EkkoAgentRunSocketData {
+  modelRoute?: ModelRouteRequest
   input: string | ContentBlock[]
   display_input?: string | ContentBlock[] | null
   display_role?: 'user' | 'command'
@@ -424,6 +427,7 @@ export async function handleEkkoAgentRun(
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => boolean,
   skipUserMessage = false,
   backgroundContinuationContext?: BackgroundContinuationContext,
+  persistModelRoute = true,
 ) {
   const sessionId = String(data.session_id || '').trim()
   if (!sessionId) {
@@ -435,6 +439,21 @@ export async function handleEkkoAgentRun(
     return
   }
   const authenticatedUserId = socket.data?.user?.id == null ? undefined : String(socket.data.user.id)
+
+  const storedSession = getSession(sessionId)
+  let modelRoute: ModelRouteRequest | undefined
+  try {
+    modelRoute = snapshotModelRoute(Object.hasOwn(data, 'modelRoute') ? data.modelRoute : storedSession?.modelRoute)
+    if (modelRoute && !modelRoute.modelId?.trim()) throw new Error('Magpie modelRoute.modelId is required')
+  } catch (err) {
+    const state = getOrCreateSession(sessionMap, sessionId)
+    state.isWorking = false
+    const payload = { event: 'run.failed', session_id: sessionId, error: err instanceof Error ? err.message : String(err) }
+    socket.emit('run.failed', payload)
+    data.onEvent?.('run.failed', payload)
+    dequeueNextQueuedRun(socket, sessionId, profile)
+    return
+  }
 
   socket.join(`session:${sessionId}`)
   const state = getOrCreateSession(sessionMap, sessionId)
@@ -450,11 +469,13 @@ export async function handleEkkoAgentRun(
   const abortController = new AbortController()
   state.abortController = abortController
 
-  const storedSession = getSession(sessionId)
   if (storedSession && !storedSession.user_id && authenticatedUserId) {
     updateSession(sessionId, { user_id: authenticatedUserId })
   }
-  const modelConfig = await resolveBridgeRunModelConfig({
+  const modelConfig = modelRoute ? {
+    model: modelRoute.modelId!,
+    provider: data.provider || storedSession?.provider || '',
+  } : await resolveBridgeRunModelConfig({
     profile,
     sessionModel: storedSession?.model,
     sessionProvider: storedSession?.provider,
@@ -467,7 +488,7 @@ export async function handleEkkoAgentRun(
   const storedApiMode = storedSession?.provider === modelConfig.provider
     ? storedSession.api_mode || undefined
     : undefined
-  const runtimeConfig = await resolveEkkoProviderRuntimeConfig({
+  const runtimeConfig = modelRoute ? { baseUrl: undefined, apiMode: undefined, apiKey: undefined } : await resolveEkkoProviderRuntimeConfig({
     profile,
     provider: modelConfig.provider,
     model: modelConfig.model,
@@ -532,6 +553,7 @@ export async function handleEkkoAgentRun(
       agent_mode: 'scoped',
       user_id: authenticatedUserId,
       model: modelConfig.model,
+      modelRoute,
       provider: modelConfig.provider,
       api_mode: apiMode || '',
       reasoning_effort: persistedReasoningEffort || '',
@@ -558,6 +580,7 @@ export async function handleEkkoAgentRun(
   if (storedSession && apiMode && storedSession.api_mode !== apiMode) {
     updateSession(sessionId, { api_mode: apiMode })
   }
+  if (storedSession && modelRoute && persistModelRoute) updateSession(sessionId, { modelRoute })
   if (shouldEmitWorkspaceUpdate) {
     emit('session.workspace.updated', {
       event: 'session.workspace.updated',
@@ -614,7 +637,10 @@ export async function handleEkkoAgentRun(
     })
   }
 
-  const { providerConfig, fallbackProviderConfig } = resolveModelProviderConfigs({
+  const { providerConfig, fallbackProviderConfig } = modelRoute ? {
+    providerConfig: { id: modelConfig.provider, defaultModel: modelRoute.modelId },
+    fallbackProviderConfig: undefined,
+  } : resolveModelProviderConfigs({
     provider: modelConfig.provider,
     baseUrl,
     apiKey,
@@ -622,13 +648,13 @@ export async function handleEkkoAgentRun(
     apiMode,
     timeoutMs: getChatEkkoModelRequestTimeoutMs(),
   })
-  const authorizedProviderFetch = createAuthorizedProviderFetch({
+  const authorizedProviderFetch = modelRoute ? undefined : createAuthorizedProviderFetch({
     profile,
     provider: modelConfig.provider,
     model: modelConfig.model,
     accessToken: apiKey,
   })
-  const modelClient = createProviderModelClient(createModelClient(providerConfig, { fetch: authorizedProviderFetch }), {
+  const modelClient = modelRoute ? createMagpieGatewayAdapter({ sessionId, ...modelRoute }) : createProviderModelClient(createModelClient(providerConfig, { fetch: authorizedProviderFetch }), {
     providerConfig,
     fallback: fallbackProviderConfig
       ? {
@@ -744,6 +770,7 @@ export async function handleEkkoAgentRun(
       result || '(No result was returned.)',
     ].join('\n')
     const queuedRun: QueuedRun = {
+      modelRoute: snapshotModelRoute(modelRoute),
       queue_id: `ekko_subagent_${event.subagentId}`,
       input: continuationMessage,
       displayInput: null,
@@ -1335,6 +1362,8 @@ export async function handleEkkoAgentRun(
     let fixedContextEstimate: Promise<number> | undefined
     const compressedHistory = callbackContext
       ? []
+      // The legacy summarizer uses provider credentials; never dispatch it for a Magpie opt-in.
+      : modelRoute ? await buildDbSnapshotAwareHistory(sessionId, profile, { excludeLastUser: shouldPersistUserMessage })
       : data.context_compression_enabled === false ? [] : await buildCompressedHistory(
         sessionId,
         profile,
