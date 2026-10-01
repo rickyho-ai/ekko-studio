@@ -4,7 +4,6 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { PassThrough } from 'stream'
 import { spawn } from 'child_process'
-import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../../packages/server/src/bootstrap/coding-agent-adapters'
 import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
@@ -48,7 +47,7 @@ describe('global native usage accounting', () => {
       agentSessionId: sessionId, sessionId, agentId, mode,
       profile: sessionId, provider: mode === 'global' ? 'global' : 'test', model: '', command: agentId,
       args: agentId === 'pi' ? ['--mode', 'rpc'] : [], shellCommand: agentId,
-      workspaceDir: workspace, env: { GROK_HOME: workspace, CODEX_HOME: workspace, OPENCODE_DB: join(workspace, 'opencode.db') },
+      workspaceDir: workspace, env: { GROK_HOME: workspace, CODEX_HOME: workspace },
     })
     manager.send(sessionId, 'usage audit')
   }
@@ -218,17 +217,4 @@ describe('global native usage accounting', () => {
     ]))
   })
 
-  it('uses the exact OpenCode assistant message model and leaves other sessions alone', () => {
-    const db = new DatabaseSync(join(workspace, 'opencode.db'))
-    db.exec('CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)')
-    db.prepare('INSERT INTO message VALUES (?, ?, ?)').run('msg', 'native-session', JSON.stringify({ role: 'assistant', modelID: 'actual-model', providerID: 'actual-provider' }))
-    db.close()
-    start('opencode')
-    const event = { type: 'step_finish', sessionID: 'native-session', part: { id: 'step', messageID: 'msg', type: 'step-finish', tokens: { input: 10, output: 2 } } }
-    emit(event)
-    emit(event)
-    close()
-    expect(getUsage(sessionId)?.model).toBe('actual-model')
-    expect(getRecordedUsageTotals(sessionId, 'coding_agent')).toMatchObject({ inputTokens: 10, outputTokens: 2, apiCalls: 1 })
-  })
 })

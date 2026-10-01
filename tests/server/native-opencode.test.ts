@@ -240,7 +240,7 @@ describe('native OpenCode Fast V1', () => {
     sdk.discover.mockResolvedValueOnce(undefined)
     await expect(adapter.nativeOpenCodeClient()).rejects.toThrow('no runtime was started')
     const source = readFileSync('packages/server/src/modules/studio/services/chat-run/native-opencode.ts', 'utf8')
-    expect(source).not.toMatch(/OPENCODE_DB|Service\.(ensure|stop)|spawn\(|exec\(|writeFile|apiKey/)
+    expect(source).not.toMatch(/OPENCODE_DB|OPENCODE_CONFIG_(DIR|CONTENT)|Service\.(ensure|start|stop)|spawn\(|exec\(|writeFile|apiKey|prepareCodingAgentLaunch|registerCodexProxyTarget|writeModelRunProfileToken/)
   })
 
   it('runs the native chat lifecycle without persisting messages or creating scoped runtime state', async () => {

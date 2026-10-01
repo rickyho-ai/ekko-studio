@@ -18,6 +18,31 @@ the retired per-conversation launcher. The old launch preparation helpers remain
 for unrelated terminal/configuration functionality; they are not a fallback for
 the native chat path. Existing isolated sessions are not migrated or replaced.
 
+## Legacy ownership verification
+
+The normal socket/API dispatcher returns through `handleNativeOpenCodeRun`
+before MCP capability, scoped token, proxy, credential or launch preparation.
+Read/continue and socket reopen use the persisted native mapping directly.
+`nativeOpenCodeClient` uses authenticated `Service.discover`, never `ensure`,
+`start`, or a process runner. A failed native call does not enter a legacy path.
+
+| Component | Normal OpenCode chat | Remaining owner / disposition |
+| --- | --- | --- |
+| Disposable `opencode run --format json` child, stdout parser and session recorder | Unreachable | Removed from `runtime/run-manager.ts`; both manager start/send reject OpenCode before side effects |
+| SQLite assistant-model reader used by that stdout parser | Unreachable | Removed from `runtime/native-model.ts`; Codex metadata reader retained |
+| `openCodeRuntimeEnv`, isolated `OPENCODE_DB` and inline config | Not called | Retained for explicit prepare/native-terminal launch, not native chat |
+| `opencodeRuntimeConfig`, scoped base config, prompt and launcher generation | Not called | Retained for explicit launch/terminal and editable scoped configuration |
+| Scoped proxy target / credential and MCP token plumbing | Bypassed | Retained for explicit scoped terminal launch and other coding runtimes |
+| Legacy history/session commands, stop/invalidation, shared registry and model catalogs | Not part of native admission | Retained for history, terminal management and other runtime owners; not a native-chat fallback |
+
+`prepareCodingAgentLaunch` is still exposed by `/api/coding-agents/:id/launch/prepare`
+and used by `/launch/native` through `openCodingAgentNativeTerminal`; the client
+has explicit launch API helpers. Those entry points do not use the retired print
+runner. The production manager `start` caller is the gated
+`startCodingAgentRunInternal`, not the terminal launcher. Historical/scoped
+configuration tests therefore remain; obsolete disposable-runner tests are
+replaced by rejection/no-side-effect regressions.
+
 On a cold location after native service restart, OpenCode 2.0.20's model/plugin
 APIs initially return snapshots before config plugin initialization settles.
 Admission waits at most 15 seconds for `opencode.config.provider` to become

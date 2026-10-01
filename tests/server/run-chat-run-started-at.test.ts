@@ -189,7 +189,7 @@ describe('ChatRunSocket reports when the run started', () => {
     expect(resumed![1]).toMatchObject({ isWorking: true, runStartedAt: startedAt })
   })
 
-  it('dispatches normal OpenCode chat directly to the native adapter before legacy MCP/proxy/runtime preparation', async () => {
+  it.each(['codex', 'claude'])('dispatches normal OpenCode %s directly to the native adapter before legacy MCP/token/proxy/runtime preparation', async route => {
     const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { io, socket } = makeServerHarness()
     const server = new ChatRunSocket(io as any)
@@ -197,12 +197,16 @@ describe('ChatRunSocket reports when the run started', () => {
     handleNativeOpenCodeRunMock.mockClear()
     const runtime = await import('../../packages/server/src/modules/studio/public/chat-agent-runtime')
     vi.mocked(runtime.getChatCodingAgentMcpServers).mockClear()
-    const input = { session_id: 'native-objective', input: 'hello', coding_agent_id: 'opencode', source: 'coding_agent',
-      modelRoute: { agentId: 'opencode', routeId: 'codex', modelId: 'codex/exact' } }
-    await (server as any).handleRun(socket, input, 'default')
-    expect(handleNativeOpenCodeRunMock).toHaveBeenCalledWith(expect.anything(), socket, input, 'default', expect.any(Map))
-    expect(handleCodingAgentRunMock).not.toHaveBeenCalled()
-    expect(runtime.getChatCodingAgentMcpServers).not.toHaveBeenCalled()
+    const issue = vi.spyOn(runMcpCredentials, 'issue')
+    try {
+      const input = { session_id: 'native-objective', input: 'hello', coding_agent_id: 'opencode', source: 'coding_agent',
+        modelRoute: { agentId: 'opencode', routeId: route, modelId: `${route}/exact` } }
+      await (server as any).handleRun(socket, input, 'default')
+      expect(handleNativeOpenCodeRunMock).toHaveBeenCalledWith(expect.anything(), socket, input, 'default', expect.any(Map))
+      expect(handleCodingAgentRunMock).not.toHaveBeenCalled()
+      expect(runtime.getChatCodingAgentMcpServers).not.toHaveBeenCalled()
+      expect(issue).not.toHaveBeenCalled()
+    } finally { issue.mockRestore() }
   })
 
   it('captures ordinary queued intent and restores it on dequeue without sharing mutable state', async () => {
